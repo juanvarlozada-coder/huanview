@@ -1,0 +1,19 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+X-AppImage-Version=0.1.0
+Name=Huanview
+GenericName=Visor de imágenes
+GenericName[en]=Image Viewer
+Comment=Visor de imágenes minimalista, rápido y fluido
+Comment[en]=Minimalist, fast and fluid image viewer
+Exec=huanview %F
+Icon=huanview
+Terminal=false
+NoDisplay=false
+Categories=Graphics;Viewer;2DGraphics;
+MimeType=image/bmp;image/gif;image/jpeg;image/jpg;image/pjpeg;image/png;image/tiff;image/x-ico;image/x-portable-bitmap;image/webp;
+Keywords=image;viewer;photo;fotos;imagenes;zoom;anotaciones;
+StartupWMClass=huanview
+StartupNotify=true
+X-KDE-SubstituteUID=false

@@ -1,0 +1,5 @@
+/target
+target/
+AppDir/
+squashfs-root/
+zig/

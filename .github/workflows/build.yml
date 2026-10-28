@@ -1,0 +1,65 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libcairo-gles2
+      - run: cargo build --release
+      - name: AppImage
+        run: |
+          mkdir -p AppDir/usr/bin dist
+          cp target/release/huanview AppDir/usr/bin/
+          cp packaging/appimage/huanview.desktop AppDir/
+          cp packaging/appimage/huanview.png AppDir/
+          curl -sSL -o /tmp/linuxdeploy https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -sSL -o /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/linuxdeploy /tmp/appimagetool
+          sudo apt-get install -y appstream
+          /tmp/linuxdeploy --appdir AppDir --executable AppDir/usr/bin/huanview --desktop-file AppDir/huanview.desktop --icon-file AppDir/huanview.png
+          /tmp/appimagetool AppDir "dist/Huanview-${GITHUB_REF_NAME#v}-x86_64.AppImage"
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: "dist/*.AppImage" }
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-pc-windows-gnu }
+      - run: cargo build --release --target x86_64-pc-windows-gnu
+      - name: NSIS installer
+        run: |
+          mkdir dist -Force
+          (New-Object Net.WebClient).DownloadFile('https://nsis.sourceforge.io/mediawiki/images/2/20/nsis-3.11.zip','nsis.zip')
+          Expand-Archive nsis.zip -DestinationPath nsis
+          & nsis\NSIS\makensis.exe packaging\windows\installer.nsi
+        shell: pwsh
+      - name: Portable zip
+        run: |
+          Compress-Archive -Path target/x86_64-pc-windows-gnu/release/huanview.exe,packaging/windows/icon.ico -DestinationPath "dist/Huanview-portable-win64.zip"
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: "dist/*" }
+
+  release:
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            linux/*
+            windows/*
