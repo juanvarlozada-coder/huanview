@@ -47,7 +47,7 @@ jobs:
         shell: pwsh
       - name: Portable zip
         run: |
-          Compress-Archive -Path target/x86_64-pc-windows-gnu/release/huanview.exe,packaging/windows/icon.ico -DestinationPath "dist/Huanview-portable-win64.zip"
+          Compress-Archive -Path target/x86_64-pc-windows-gnu/release/huanview.exe,packaging/windows/icon.ico -DestinationPath "dist/Huanview-$($env:GITHUB_REF_NAME.Replace('v',''))-portable-win64.zip"
         shell: pwsh
       - uses: actions/upload-artifact@v4
         with: { name: windows, path: "dist/*" }
