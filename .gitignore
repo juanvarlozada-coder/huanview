@@ -3,3 +3,4 @@ target/
 AppDir/
 squashfs-root/
 zig/
+dist/
