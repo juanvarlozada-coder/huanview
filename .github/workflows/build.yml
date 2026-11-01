@@ -25,8 +25,8 @@ jobs:
           curl -sSL -o /tmp/appimagetool https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
           chmod +x /tmp/linuxdeploy /tmp/appimagetool
           sudo apt-get install -y appstream
-          /tmp/linuxdeploy --appdir AppDir --executable AppDir/usr/bin/huanview --desktop-file AppDir/huanview.desktop --icon-file AppDir/huanview.png
-          /tmp/appimagetool AppDir "dist/Huanview-${GITHUB_REF_NAME#v}-x86_64.AppImage"
+          /tmp/linuxdeploy --appimage-extract-and-run --appdir AppDir --executable AppDir/usr/bin/huanview --desktop-file AppDir/huanview.desktop --icon-file AppDir/huanview.png
+          /tmp/appimagetool --appimage-extract-and-run AppDir "dist/Huanview-${GITHUB_REF_NAME#v}-x86_64.AppImage"
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: "dist/*.AppImage" }
 
