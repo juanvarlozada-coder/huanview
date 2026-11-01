@@ -14,7 +14,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libcairo-gles2
       - run: cargo build --release
       - name: AppImage
         run: |
@@ -41,9 +40,10 @@ jobs:
       - name: NSIS installer
         run: |
           mkdir dist -Force
-          (New-Object Net.WebClient).DownloadFile('https://nsis.sourceforge.io/mediawiki/images/2/20/nsis-3.11.zip','nsis.zip')
-          Expand-Archive nsis.zip -DestinationPath nsis
-          & nsis\NSIS\makensis.exe packaging\windows\installer.nsi
+          & choco install nsis -y --no-progress 2>$null
+          $makensis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          If (-not (Test-Path $makensis)) { $makensis = "C:\Program Files\NSIS\makensis.exe" }
+          & $makensis packaging\windows\installer.nsi
         shell: pwsh
       - name: Portable zip
         run: |
