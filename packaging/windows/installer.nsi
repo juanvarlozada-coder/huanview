@@ -11,6 +11,7 @@ RequestExecutionLevel user
 
 !include "MUI2.nsh"
 !define MUI_ABORTWARNING
+!define MUI_RESERVEFILE_LANGDLL
 
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -21,7 +22,6 @@ RequestExecutionLevel user
 !insertmacro MUI_LANGUAGE "Spanish"
 !insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "PortugueseBR"
-MUI_RESERVEFILE_LANGDLL
 
 ; textos por idioma (accesos directos y resultados)
 LangString LngInstalled  ${LANG_SPANISH}      "Huanview se ha instalado correctamente."
