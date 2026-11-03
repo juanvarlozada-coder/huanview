@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use crate::lang::{self, Lang};
 use crate::loader::{Loaded, Loader};
 use crate::updater::{
     self, apply_update_and_restart, check_for_update, download_destination, download_to,
@@ -79,9 +80,15 @@ pub struct HuanApp {
     update: UpdaterState,
     update_rx: Option<Receiver<UpdateMsg>>,
     auto_check: bool,
+    /// idioma de la interfaz
+    lang: Lang,
 }
 
 impl HuanApp {
+    fn t(&self, key: &str) -> &'static str {
+        lang::tr(self.lang, key)
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf) -> Box<dyn eframe::App> {
         cc.egui_ctx.style_mut(|s| {
             s.visuals.dark_mode = true;
@@ -96,6 +103,7 @@ impl HuanApp {
         // chequeo de actualizaciones (hilo aparte, silencioso)
         let update_rx = updater_start_check();
         let auto_check = load_config().auto_check;
+        let lang = lang::load_lang();
         Box::new(HuanApp {
             loader,
             files,
@@ -118,6 +126,7 @@ impl HuanApp {
             update: UpdaterState::default(),
             update_rx: Some(update_rx),
             auto_check,
+            lang,
         })
     }
 
@@ -264,7 +273,7 @@ impl HuanApp {
             .files
             .get(self.current)
             .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-            .unwrap_or("(sin imágenes)")
+            .unwrap_or(lang::tr(self.lang, "no_images"))
             .to_string();
         let counter = if self.files.is_empty() {
             String::new()
@@ -286,32 +295,32 @@ impl HuanApp {
 
                     ui.separator();
                     // —— herramientas de dibujo ——
-                    if gui_button(ui, "Vista") {
+                    if gui_button(ui, self.t("view")) {
                         self.tool = Tool::Pan;
                     }
-                    if gui_button(ui, "Lápiz") {
+                    if gui_button(ui, self.t("pen")) {
                         self.tool = Tool::Pen;
                     }
-                    if gui_button(ui, "Marcador") {
+                    if gui_button(ui, self.t("marker")) {
                         self.tool = Tool::Marker;
                     }
                     ui.add_space(2.0);
                     for (ci, col) in PEN_COLORS.iter().enumerate() {
                         self.color_button(ui, *col, ci);
                     }
-                    if gui_button(ui, "Borrar") {
+                    if gui_button(ui, self.t("erase")) {
                         self.clear_annotations();
                     }
 
                     ui.separator();
                     // —— archivo ——
-                    if gui_button(ui, "Abrir") {
+                    if gui_button(ui, self.t("open")) {
                         self.open_file_dialog();
                     }
-                    if gui_button(ui, "Guardar") {
+                    if gui_button(ui, self.t("save")) {
                         self.n_export_ann();
                     }
-                    if gui_button(ui, "Guardar como") {
+                    if gui_button(ui, self.t("save_as")) {
                         self.export_annotated_png();
                     }
 
@@ -319,11 +328,11 @@ impl HuanApp {
                         // —— actualización disponible ——
                         if let Some(rel) = self.update.available.clone() {
                             ui.label(
-                                egui::RichText::new(format!("v{} disponible", rel.version))
+                                egui::RichText::new(format!("v{} {}", rel.version, self.t("available")))
                                     .strong()
                                     .color(ACCENT),
                             );
-                            if self.update.progress.is_none() && gui_button(ui, "Instalar") {
+                            if self.update.progress.is_none() && gui_button(ui, self.t("install")) {
                                 self.start_update_download();
                             }
                             if self.update.progress.is_some() {
@@ -348,7 +357,7 @@ impl HuanApp {
                                     .strong(),
                                 );
                                 ui.label(
-                                    egui::RichText::new("· Nueva versión").color(if self
+                                    egui::RichText::new(self.t("version_av")).color(if self
                                         .update
                                         .available
                                         .is_some()
@@ -361,7 +370,7 @@ impl HuanApp {
                             });
                             ui.separator();
                             ui.add_space(2.0);
-                            ui.label(egui::RichText::new("Novedades").strong());
+                            ui.label(egui::RichText::new(self.t("whats_new")).strong());
                             ScrollArea::vertical()
                                 .max_height(160.0)
                                 .show(ui, |ui| {
@@ -375,12 +384,38 @@ impl HuanApp {
                                     );
                                 });
                             ui.separator();
-                            if ui.checkbox(&mut self.auto_check, "Buscar actualizaciones al iniciar").changed() {
+                            let check_txt = self.t("check_updates");
+                            if ui.checkbox(&mut self.auto_check, check_txt).changed() {
                                 save_config(&updater::UpdaterConfig {
                                     auto_check: self.auto_check,
                                     last_check: None,
                                 });
                             }
+                            ui.separator();
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(self.t("language")).small());
+                            });
+                            egui::ComboBox::from_id_source("langsel")
+                                .selected_text(
+                                    lang::LANGS
+                                        .iter()
+                                        .find(|(_, l)| *l == self.lang)
+                                        .map(|(n, _)| *n)
+                                        .unwrap_or("Español"),
+                                )
+                                .width(140.0)
+                                .show_ui(ui, |ui| {
+                                    for (name, l) in lang::LANGS {
+                                        let selected = ui.selectable_value(
+                                            &mut self.lang,
+                                            l,
+                                            name,
+                                        );
+                                        if selected.changed() {
+                                            lang::save_lang(self.lang);
+                                        }
+                                    }
+                                });
                         });
                     });
                 });
@@ -461,7 +496,7 @@ impl HuanApp {
             };
             let (files, current) = collect_images(&p);
             if files.is_empty() {
-                set_pending_toast("No hay imágenes en esa carpeta".into());
+                set_pending_toast(self.t("no_images_folder").to_string());
                 return;
             }
             let _ = start;
@@ -501,9 +536,9 @@ impl HuanApp {
         match self.bake_annotated(path) {
             Ok(rgba) => {
                 if rgba.save(&save_to).is_ok() {
-                    set_pending_toast(format!("Guardado: {}", save_to.display()));
+                    set_pending_toast(format!("{} {}", self.t("saved"), save_to.display()));
                 } else {
-                    set_pending_toast("No se pudo guardar el PNG".into());
+                    set_pending_toast(self.t("png_failed").to_string());
                 }
             }
             Err(e) => set_pending_toast(format!("Error al exportar: {e}")),
@@ -637,7 +672,7 @@ impl HuanApp {
             ui.painter().text(
                 avail.center(),
                 Align2::CENTER_CENTER,
-                "Cargando…",
+                crate::lang::tr(self.lang, "loading"),
                 FontId::proportional(14.0),
                 TEXT_DIM,
             );
@@ -964,9 +999,9 @@ impl HuanApp {
             path.extension().and_then(|e| e.to_str()).unwrap_or("img")
         ));
         if std::fs::write(&sidecar, out).is_ok() {
-            set_pending_toast(format!("Anotaciones guardadas: {}", sidecar.display()));
+            set_pending_toast(format!("{} {}", self.t("ann_saved"), sidecar.display()));
         } else {
-            set_pending_toast("No se pudieron guardar las anotaciones".into());
+            set_pending_toast(self.t("ann_failed").to_string());
         }
     }
 }
@@ -1010,7 +1045,7 @@ impl HuanApp {
                 Ok(UpdateMsg::Checked(res)) => {
                     match res {
                         Ok(Some(rel)) => {
-                            set_pending_toast("Versión nueva disponible · mira Instalar en el HUD".into());
+                            set_pending_toast(self.t("update_found").to_string());
                             self.update.available = Some(rel);
                         }
                         Ok(None) => {}
@@ -1059,7 +1094,7 @@ impl HuanApp {
         self.update.progress = Some(prog.clone());
         self.update.progress_pct = 0;
         self.update_rx = Some(rx);
-        set_pending_toast(format!("Descargando {}", rel.version_full));
+        set_pending_toast(format!("{} {}", self.t("downloading"), rel.version_full));
         std::thread::Builder::new()
             .name("huanview-update-dl".into())
             .spawn(move || {

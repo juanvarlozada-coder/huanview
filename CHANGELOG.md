@@ -1,5 +1,10 @@
 # Changelog de Huanview
 
+## v0.1.3 — Multi-idioma
+- **Idiomas en la app**: Español, English y Português (⚙ → Idioma; se recuerda en `~/.config/huanview/settings.json`, con detección automática del idioma del sistema la primera vez).
+- **Todos los textos de la interfaz** traducidos: herramientas, archivos, avisos (descargas, anotaciones, errores) y ajustes.
+- **Instalador de Windows multi-idioma**: diálogo de elección (Español / English / Português), accesos directos y mensajes de instalación/desinstalación traducidos.
+
 ## v0.1.2 — Interfaz renovada
 - **Flechas de navegación** grandes y translúcidas sobre la imagen: aparecen al pasar el cursor y se atenúan en el primer/último fotograma.
 - **Barra superior fija** (en lugar del panel flotante): herramientas de dibujo (Vista, Lápiz, Marcador, colores, Borrar) y opciones de archivo (Abrir, Guardar, Guardar como).

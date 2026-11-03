@@ -1,5 +1,6 @@
 // Huanview — minimalist fast image viewer inspired by Gwenview.
 mod app;
+mod lang;
 mod loader;
 mod updater;
 mod util;
