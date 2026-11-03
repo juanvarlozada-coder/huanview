@@ -52,17 +52,29 @@ xdg-mime default huanview.desktop image/jpeg image/png image/webp
 
 ## Publicación
 Paquetes listos en `dist/` (y autogenerables con GitHub Actions en `.github/workflows/build.yml`):
-- `Huanview-0.1.0-installer-win64.exe` — instalador NSIS para Windows x64 (accesos directos, desinstalador, HKCU)
-- `Huanview-0.1.0-portable-win64.zip` — versión portable de Windows
-- `Huanview-0.1.0-x86_64.AppImage` — Linux (X11 y Wayland), empacado con linuxdeploy + appimagetool
+- `Huanview-0.1.1-installer-win64.exe` — instalador NSIS para Windows x64 (accesos directos, desinstalador, HKCU)
+- `Huanview-0.1.1-portable-win64.zip` — versión portable de Windows
+- `Huanview-0.1.1-x86_64.AppImage` — Linux (X11 y Wayland), empacado con linuxdeploy + appimagetool
 
 Para reproducir el AppImage localmente:
 ```sh
 cargo build --release
 linuxdeploy --appdir AppDir --executable AppDir/usr/bin/huanview \
   --desktop-file AppDir/huanview.desktop --icon-file AppDir/huanview.png
-appimagetool AppDir Huanview-0.1.0-x86_64.AppImage
+appimagetool AppDir Huanview-0.1.1-x86_64.AppImage
 ```
+
+## Auto-actualización
+Al iniciar, Huanview consulta (en un hilo aparte, sin bloquear la UI) la última release de GitHub. Si hay una versión mayor disponible:
+- Aparece una fila en el HUD: **v0.1.x disponible** con botón **Instalar** y barra de progreso de descarga. Nunca se instala a la fuerza: siempre esperas tu clic.
+- **Windows**: descarga el instalador a `%TEMP%`, lo ejecuta silencioso (`/S`, nsis por usuario, sin admin) y reinicia el visor.
+- **Linux (AppImage)**: descarga el `.AppImage` nuevo al lado del actual, hace un swap atómico (respaldo en `Huanview.old`) y re-lanza.
+
+Configuración opcional en `~/.config/huanview/updater.json`:
+```json
+{ "auto_check": false, "last_check": 1793674291 }
+```
+Con `auto_check: false` el visor no consulta nada al arrancar. Si el chequeo falla por falta de red, simplemente se intenta de nuevo en el próximo arranque (sin spam).
 
 ## Compilar
 ```sh

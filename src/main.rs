@@ -1,6 +1,7 @@
 // Huanview — minimalist fast image viewer inspired by Gwenview.
 mod app;
 mod loader;
+mod updater;
 mod util;
 
 use std::path::Path;

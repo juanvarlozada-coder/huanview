@@ -11,6 +11,17 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use crate::loader::{Loaded, Loader};
+use crate::updater::{
+    self, apply_update_and_restart, check_for_update, download_destination, download_to,
+    load_config, save_config, Release, UpdaterState,
+};
+use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, mpsc::{self, Receiver}};
+
+enum UpdateMsg {
+    Checked(Result<Option<Release>, String>),
+    Downloaded(Result<PathBuf, String>),
+}
 use crate::util::collect_images;
 
 const BG: Color32 = Color32::from_rgb(24, 24, 27);
@@ -64,6 +75,9 @@ pub struct HuanApp {
     fullscreen: bool,
     last_fit: f32, // fit scale of the current image (for the 1:1 shortcut)
     toast: Option<(String, Instant)>,
+    // update
+    update: UpdaterState,
+    update_rx: Option<Receiver<UpdateMsg>>,
 }
 
 impl HuanApp {
@@ -78,6 +92,8 @@ impl HuanApp {
         let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6);
         let loader = Loader::new(workers);
         loader.reload(&files, current);
+        // chequeo de actualizaciones (hilo aparte, silencioso)
+        let update_rx = updater_start_check();
         Box::new(HuanApp {
             loader,
             files,
@@ -97,6 +113,8 @@ impl HuanApp {
             fullscreen: false,
             last_fit: 1.0,
             toast: None,
+            update: UpdaterState::default(),
+            update_rx: Some(update_rx),
         })
     }
 
@@ -194,6 +212,7 @@ impl eframe::App for HuanApp {
         for m in self.loader.poll() {
             self.apply_loaded(ctx, m);
         }
+        self.poll_update(ctx);
         if let Some((t, _)) = take_pending_toast() {
             self.toast = Some((t, Instant::now()));
         }
@@ -270,6 +289,27 @@ impl HuanApp {
                             .color(if self.zoom_target <= 1.001 { TEXT_DIM } else { ACCENT }),
                     );
                 });
+                // —— actualización disponible ——
+                let avail = self.update.available.clone();
+                if let Some(rel) = avail {
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("v{} disponible", rel.version))
+                                .strong()
+                                .color(ACCENT),
+                        );
+                        if self.update.progress.is_none() && gui_button(ui, "Instalar") {
+                            self.start_update_download();
+                        }
+                        if self.update.progress.is_some() {
+                            let frac = (self.update.progress_pct as f32 / 100.0).clamp(0.0, 1.0);
+                            ui.add(
+                                egui::ProgressBar::new(frac).desired_width(90.0).show_percentage(),
+                            );
+                        }
+                    });
+                }
                 ui.separator();
                 ui.horizontal(|ui| {
                     if gui_button(ui, "‹") {
@@ -724,5 +764,107 @@ impl HuanApp {
         } else {
             set_pending_toast("No se pudieron guardar las anotaciones".into());
         }
+    }
+}
+
+// ----------------------------------------------------------- updater glue
+
+fn updater_start_check() -> Receiver<UpdateMsg> {
+    let (tx, rx) = mpsc::channel::<UpdateMsg>();
+    std::thread::Builder::new()
+        .name("huanview-updater".into())
+        .spawn(move || {
+            let cfg = load_config();
+            if !cfg.auto_check {
+                return; // desactivado: no envía mensaje
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let res = check_for_update();
+            save_config(&updater::UpdaterConfig { auto_check: cfg.auto_check, last_check: Some(now) });
+            let _ = tx.send(UpdateMsg::Checked(res));
+        })
+        .unwrap();
+    rx
+}
+
+impl HuanApp {
+    fn poll_update(&mut self, ctx: &egui::Context) {
+        // descarga en curso: actualizar progreso
+        if let Some(p) = self.update.progress.as_ref() {
+            let v = p.load(std::sync::atomic::Ordering::SeqCst);
+            if v > 0 {
+                self.update.progress_pct = v;
+            }
+        }
+        let Some(rx) = self.update_rx.as_ref() else { return };
+        let mut new_rx: Option<Receiver<UpdateMsg>> = None;
+        loop {
+            match rx.try_recv() {
+                Ok(UpdateMsg::Checked(res)) => {
+                    match res {
+                        Ok(Some(rel)) => {
+                            set_pending_toast("Versión nueva disponible · mira Instalar en el HUD".into());
+                            self.update.available = Some(rel);
+                        }
+                        Ok(None) => {}
+                        Err(e) => self.update.err = Some(e), // silencioso
+                    }
+                    new_rx = Some(updater_start_check()); // deja listo el siguiente chequeo (tecla U o relanzamiento)
+                    break;
+                }
+                Ok(UpdateMsg::Downloaded(res)) => {
+                    match res {
+                        Ok(path) => {
+                            self.update.progress = None;
+                            match apply_update_and_restart(&path) {
+                                Ok(()) => {
+                                    self.update_rx = None;
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                    std::process::exit(0);
+                                }
+                                Err(e) => set_pending_toast(format!("No se pudo aplicar: {e}")),
+                            }
+                        }
+                        Err(e) => set_pending_toast(format!("Fallo la descarga: {e}")),
+                    }
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        if let Some(rx2) = new_rx {
+            self.update_rx = Some(rx2);
+        }
+    }
+
+    fn start_update_download(&mut self) {
+        let Some(rel) = self.update.available.clone() else { return };
+        let dest = match download_destination() {
+            Ok(d) => d,
+            Err(e) => {
+                set_pending_toast(e);
+                return;
+            }
+        };
+        let (tx, rx) = mpsc::channel();
+        let url = rel.download_url.clone();
+        let prog = Arc::new(AtomicU64::new(0));
+        self.update.progress = Some(prog.clone());
+        self.update.progress_pct = 0;
+        self.update_rx = Some(rx);
+        set_pending_toast(format!("Descargando {}", rel.version_full));
+        std::thread::Builder::new()
+            .name("huanview-update-dl".into())
+            .spawn(move || {
+                let res = match download_to(&url, &dest, prog) {
+                    Ok(()) => Ok(dest),
+                    Err(e) => Err(e),
+                };
+                let _ = tx.send(UpdateMsg::Downloaded(res));
+            })
+            .unwrap();
     }
 }
