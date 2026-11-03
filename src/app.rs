@@ -4,7 +4,7 @@
 use eframe::egui;
 use egui::{
     Align, Align2, Color32, FontId, Frame, Pos2, Rect, ScrollArea, Sense, Stroke, TextureHandle,
-    TextureOptions, TopBottomPanel, Vec2, ViewportCommand, Window,
+    TextureOptions, TopBottomPanel, Vec2, ViewportCommand,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -78,6 +78,7 @@ pub struct HuanApp {
     // update
     update: UpdaterState,
     update_rx: Option<Receiver<UpdateMsg>>,
+    auto_check: bool,
 }
 
 impl HuanApp {
@@ -94,6 +95,7 @@ impl HuanApp {
         loader.reload(&files, current);
         // chequeo de actualizaciones (hilo aparte, silencioso)
         let update_rx = updater_start_check();
+        let auto_check = load_config().auto_check;
         Box::new(HuanApp {
             loader,
             files,
@@ -115,6 +117,7 @@ impl HuanApp {
             toast: None,
             update: UpdaterState::default(),
             update_rx: Some(update_rx),
+            auto_check,
         })
     }
 
@@ -244,124 +247,184 @@ impl eframe::App for HuanApp {
             self.canvas(ctx, ui);
         });
 
-        self.hud_window(ctx);
+        self.top_bar(ctx);
+        self.zoom_chip(ctx);
         self.hud_toast(ctx);
 
         ctx.request_repaint();
     }
 }
 
-// --------------------------------------------------------------- HUD window
+// ------------------------------------------------- top bar + zoom chip
 
 impl HuanApp {
-    fn hud_window(&mut self, ctx: &egui::Context) {
-        Window::new("huanhud")
-            .title_bar(false)
+    /// Barra pequeña pegada arriba: dibujo, archivos y configuración.
+    fn top_bar(&mut self, ctx: &egui::Context) {
+        let name = self
+            .files
+            .get(self.current)
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
+            .unwrap_or("(sin imágenes)")
+            .to_string();
+        let counter = if self.files.is_empty() {
+            String::new()
+        } else {
+            format!("{} / {}", self.current + 1, self.files.len())
+        };
+
+        TopBottomPanel::top("htop")
+            .frame(Frame::none().fill(CHIP_BG).inner_margin(egui::Margin::symmetric(10.0, 3.0)))
             .resizable(false)
-            .collapsible(false)
-            .movable(false)
-            .current_pos(Pos2::new(12.0, 12.0))
-            .frame(Frame::window(&ctx.style()).fill(CHIP_BG))
             .show(ctx, |ui| {
-                // info line
-                let zoom_pct = if self.zoom_target >= 1.0 {
-                    format!("{} %", (self.zoom * 100.0).round())
-                } else {
-                    format!("{:.1} %", self.zoom * 100.0)
-                };
-                let name = self
-                    .files
-                    .get(self.current)
-                    .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-                    .unwrap_or("(sin imágenes)")
-                    .to_string();
-                let counter = if self.files.is_empty() {
-                    String::new()
-                } else {
-                    format!(" {} de {} ", self.current + 1, self.files.len())
-                };
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(name).font(FontId::proportional(12.0)));
-                    ui.label(egui::RichText::new(counter).small().color(TEXT_DIM));
                     ui.label(
-                        egui::RichText::new(zoom_pct)
-                            .small()
-                            .color(if self.zoom_target <= 1.001 { TEXT_DIM } else { ACCENT }),
+                        egui::RichText::new(name).font(FontId::proportional(12.0)),
                     );
-                });
-                // —— actualización disponible ——
-                let avail = self.update.available.clone();
-                if let Some(rel) = avail {
+                    if !counter.is_empty() {
+                        ui.label(egui::RichText::new(counter).small().color(TEXT_DIM));
+                    }
+
                     ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("v{} disponible", rel.version))
-                                .strong()
-                                .color(ACCENT),
-                        );
-                        if self.update.progress.is_none() && gui_button(ui, "Instalar") {
-                            self.start_update_download();
-                        }
-                        if self.update.progress.is_some() {
-                            let frac = (self.update.progress_pct as f32 / 100.0).clamp(0.0, 1.0);
-                            ui.add(
-                                egui::ProgressBar::new(frac).desired_width(90.0).show_percentage(),
-                            );
-                        }
-                    });
-                }
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if gui_button(ui, "‹") {
-                        self.navigate(-1);
-                    }
-                    if gui_button(ui, "›") {
-                        self.navigate(1);
-                    }
-                    ui.add_space(4.0);
-                    if gui_button(ui, "−") {
-                        self.set_zoom_target(self.zoom_target / 1.3);
-                    }
-                    if gui_button(ui, "Ajustar") {
-                        self.zoom_target = 1.0;
-                        self.offset_target = Vec2::ZERO;
-                    }
-                    if gui_button(ui, "+") {
-                        self.set_zoom_target(self.zoom_target * 1.3);
-                    }
-                    ui.add_space(4.0);
-                    if gui_button(ui, "Ver") {
-                        self.side_tap();
+                    // —— herramientas de dibujo ——
+                    if gui_button(ui, "Vista") {
+                        self.tool = Tool::Pan;
                     }
                     if gui_button(ui, "Lápiz") {
-                        self.side_pen_drop();
+                        self.tool = Tool::Pen;
                     }
-                    if gui_button(ui, "Marc") {
-                        self.marker_hint();
+                    if gui_button(ui, "Marcador") {
+                        self.tool = Tool::Marker;
                     }
                     ui.add_space(2.0);
                     for (ci, col) in PEN_COLORS.iter().enumerate() {
                         self.color_button(ui, *col, ci);
                     }
-                    ui.add_space(2.0);
                     if gui_button(ui, "Borrar") {
                         self.clear_annotations();
                     }
+
+                    ui.separator();
+                    // —— archivo ——
+                    if gui_button(ui, "Abrir") {
+                        self.open_file_dialog();
+                    }
+                    if gui_button(ui, "Guardar") {
+                        self.n_export_ann();
+                    }
+                    if gui_button(ui, "Guardar como") {
+                        self.export_annotated_png();
+                    }
+
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        // —— actualización disponible ——
+                        if let Some(rel) = self.update.available.clone() {
+                            ui.label(
+                                egui::RichText::new(format!("v{} disponible", rel.version))
+                                    .strong()
+                                    .color(ACCENT),
+                            );
+                            if self.update.progress.is_none() && gui_button(ui, "Instalar") {
+                                self.start_update_download();
+                            }
+                            if self.update.progress.is_some() {
+                                let frac =
+                                    (self.update.progress_pct as f32 / 100.0).clamp(0.0, 1.0);
+                                ui.add(
+                                    egui::ProgressBar::new(frac)
+                                        .desired_width(80.0)
+                                        .show_percentage(),
+                                );
+                            }
+                            ui.separator();
+                        }
+                        // —— configuración ——
+                        ui.menu_button("⚙", |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Huanview v{}",
+                                        env!("CARGO_PKG_VERSION")
+                                    ))
+                                    .strong(),
+                                );
+                                ui.label(
+                                    egui::RichText::new("· Nueva versión").color(if self
+                                        .update
+                                        .available
+                                        .is_some()
+                                    {
+                                        ACCENT
+                                    } else {
+                                        TEXT_DIM
+                                    }),
+                                );
+                            });
+                            ui.separator();
+                            ui.add_space(2.0);
+                            ui.label(egui::RichText::new("Novedades").strong());
+                            ScrollArea::vertical()
+                                .max_height(160.0)
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::multiline(&mut include_str!(
+                                            "../CHANGELOG.md"
+                                        ).to_string())
+                                            .interactive(false)
+                                            .desired_width(420.0)
+                                            .font(FontId::proportional(11.0)),
+                                    );
+                                });
+                            ui.separator();
+                            if ui.checkbox(&mut self.auto_check, "Buscar actualizaciones al iniciar").changed() {
+                                save_config(&updater::UpdaterConfig {
+                                    auto_check: self.auto_check,
+                                    last_check: None,
+                                });
+                            }
+                        });
+                    });
                 });
             });
     }
 
-    fn side_tap(&mut self) {
-        self.tool = Tool::Pan;
-        // tapping the hud shouldn't need alternate nav
-    }
-
-    fn side_pen_drop(&mut self) {
-        self.tool = Tool::Pen;
-    }
-
-    fn marker_hint(&mut self) {
-        self.tool = Tool::Marker;
+    /// Chip de zoom esquina inferior derecha (encima del filmstrip).
+    fn zoom_chip(&mut self, ctx: &egui::Context) {
+        let zoom_pct = if self.zoom_target >= 1.0 {
+            format!("{} %", (self.zoom * 100.0).round())
+        } else {
+            format!("{:.1} %", self.zoom * 100.0)
+        };
+        egui::Area::new("hzoom".into())
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_BOTTOM, [-14.0, -(FILM_H + 14.0)])
+            .show(ctx, |ui| {
+                Frame::window(&ctx.style())
+                    .fill(CHIP_BG)
+                    .inner_margin(egui::Margin::symmetric(6.0, 2.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if gui_button(ui, "−") {
+                                self.set_zoom_target(self.zoom_target / 1.3);
+                            }
+                            ui.label(
+                                egui::RichText::new(zoom_pct)
+                                    .small()
+                                    .color(if self.zoom_target <= 1.001 {
+                                        TEXT_DIM
+                                    } else {
+                                        ACCENT
+                                    }),
+                            );
+                            if gui_button(ui, "Ajustar") {
+                                self.zoom_target = 1.0;
+                                self.offset_target = Vec2::ZERO;
+                            }
+                            if gui_button(ui, "+") {
+                                self.set_zoom_target(self.zoom_target * 1.3);
+                            }
+                        });
+                    });
+            });
     }
 
     fn color_button(&mut self, ui: &mut egui::Ui, color: Color32, which: usize) {
@@ -385,7 +448,116 @@ impl HuanApp {
         }
     }
 
-    // color chip + tool buttons: keep small structural helpers below
+    /// Abrir otra imagen con diálogo nativo (rfd): carga la carpeta de esa imagen.
+    fn open_file_dialog(&mut self) {
+        if let Some(p) = rfd::FileDialog::new()
+            .add_filter("Imágenes", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "ico"])
+            .pick_file()
+        {
+            let start = if p.is_file() {
+                p.parent().map(|d| d.join(p.file_name().unwrap_or_default())).clone().unwrap_or_else(|| p.clone())
+            } else {
+                p.clone()
+            };
+            let (files, current) = collect_images(&p);
+            if files.is_empty() {
+                set_pending_toast("No hay imágenes en esa carpeta".into());
+                return;
+            }
+            let _ = start;
+            let workers =
+                std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6);
+            let loader = Loader::new(workers);
+            loader.reload(&files, current);
+            self.loader = loader;
+            self.files = files;
+            self.current = current;
+            self.full.clear();
+            self.dims.clear();
+            self.thumbs.clear();
+            self.zoom_target = 1.0;
+            self.zoom = 1.0;
+            self.offset_target = Vec2::ZERO;
+            self.offset = Vec2::ZERO;
+            self.fade = 0.0;
+        }
+    }
+
+    /// Guardar como: exporta la imagen actual con las anotaciones incrustadas (PNG).
+    fn export_annotated_png(&self) {
+        let Some(path) = self.files.get(self.current) else {
+            return;
+        };
+        let Some(save_to) = rfd::FileDialog::new()
+            .set_file_name(format!(
+                "{}_anotado.png",
+                path.file_stem().and_then(|s| s.to_str()).unwrap_or("imagen")
+            ))
+            .add_filter("PNG", &["png"])
+            .save_file()
+        else {
+            return;
+        };
+        match self.bake_annotated(path) {
+            Ok(rgba) => {
+                if rgba.save(&save_to).is_ok() {
+                    set_pending_toast(format!("Guardado: {}", save_to.display()));
+                } else {
+                    set_pending_toast("No se pudo guardar el PNG".into());
+                }
+            }
+            Err(e) => set_pending_toast(format!("Error al exportar: {e}")),
+        }
+    }
+
+    /// Rasteriza la imagen + trazos normalizados (alpha y grosor en px de la IMAGEN).
+    fn bake_annotated(
+        &self,
+        path: &PathBuf,
+    ) -> Result<image::RgbaImage, String> {
+        let mut img = image::open(path)
+            .map_err(|e| e.to_string())?
+            .to_rgba8();
+        let (iw, ih) = (img.width() as f32, img.height() as f32);
+        let stroke_list = self.annotations.get(path).cloned().unwrap_or_default();
+        for a in stroke_list {
+            let color = image::Rgba([a.color.r(), a.color.g(), a.color.b(), a.color.a()]);
+            let alpha = a.alpha.clamp(0.05, 1.0);
+            let lw = (a.width * (iw.min(ih) / 900.0).max(0.5)).max(1.0);
+            let mut stamped: std::collections::HashSet<(u32, u32)> = std::collections::HashSet::new();
+            for pts in a.points.windows(2) {
+                let (x0, y0) = (pts[0].x * iw, pts[0].y * ih);
+                let (x1, y1) = (pts[1].x * iw, pts[1].y * ih);
+                let steps = ((x1 - x0).hypot(y1 - y0) / (lw * 0.35).max(0.6)).ceil() as i32;
+                for s in 0..=steps {
+                    let t = if steps == 0 { 0.0 } else { s as f32 / steps as f32 };
+                    let (x, y) = (x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+                    let rx = ((x - lw / 2.0) as i32)..=((x + lw / 2.0) as i32);
+                    let ry = ((y - lw / 2.0) as i32)..=((y + lw / 2.0) as i32);
+                    for py in ry.clone() {
+                        for px in rx.clone() {
+                            if px < 0 || py < 0 || px >= img.width() as i32 || py >= img.height() as i32 {
+                                continue;
+                            }
+                            let (px, py) = (px as u32, py as u32);
+                            if !stamped.insert((px, py)) {
+                                continue; // el mismo trazo no se mezcla dos veces
+                            }
+                            let p = img.get_pixel(px, py);
+                            let out = [
+                                (p[0] as f32 * (1.0 - alpha) + color[0] as f32 * alpha) as u8,
+                                (p[1] as f32 * (1.0 - alpha) + color[1] as f32 * alpha) as u8,
+                                (p[2] as f32 * (1.0 - alpha) + color[2] as f32 * alpha) as u8,
+                                255,
+                            ];
+                            img.get_pixel_mut(px, py).0 = out;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(img)
+    }
 }
 
 fn gui_button(ui: &mut egui::Ui, label: &str) -> bool {
@@ -497,15 +669,44 @@ impl HuanApp {
             }
         }
 
-        // ---- click-to-navigate on the sides when fully fitted
+        // ---- click-to-navigate: grandes flechas al hover + zonas laterales
         let fits_fully = self.zoom_target <= 1.001 && shown.x <= avail.size().x + 1.5;
-        if !resp.dragged() && !resp.drag_started() && resp.clicked() && fits_fully {
+        let arrow_l =
+            Rect::from_center_size(Pos2::new(rect.left() + 38.0, rect.center().y), Vec2::splat(56.0));
+        let arrow_r =
+            Rect::from_center_size(Pos2::new(rect.right() - 38.0, rect.center().y), Vec2::splat(56.0));
+        if self.files.len() > 1 && resp.hovered() {
+            let painter = ui.painter();
+            let (gl, gr) = (&"‹", &"›");
+            for (r, g, dim) in
+                [(arrow_l, gl, self.current == 0), (arrow_r, gr, self.current + 1 == self.files.len())]
+            {
+                let a = if dim { 60 } else { 165 };
+                let bg = Color32::from_rgba_premultiplied(24, 24, 28, a);
+                let fg = Color32::from_rgba_premultiplied(228, 228, 232, a);
+                painter.circle_filled(r.center(), 27.0, bg);
+                painter.text(
+                    r.center(),
+                    Align2::CENTER_CENTER,
+                    g,
+                    FontId::proportional(30.0),
+                    fg,
+                );
+            }
+        }
+        if !resp.dragged() && !resp.drag_started() && resp.clicked() {
             if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                let t = (pos.x - rect.left()) / rect.width();
-                if t < 0.2 {
+                if arrow_l.contains(pos) {
                     self.navigate(-1);
-                } else if t > 0.8 {
+                } else if arrow_r.contains(pos) {
                     self.navigate(1);
+                } else if fits_fully {
+                    let t = (pos.x - rect.left()) / rect.width();
+                    if t < 0.2 {
+                        self.navigate(-1);
+                    } else if t > 0.8 {
+                        self.navigate(1);
+                    }
                 }
             }
         }
@@ -718,6 +919,9 @@ impl HuanApp {
             }
             if i.modifiers.ctrl && i.key_pressed(Key::S) {
                 self.n_export_ann();
+            }
+            if i.modifiers.ctrl && i.key_pressed(Key::O) {
+                self.open_file_dialog();
             }
             if i.key_pressed(Key::Delete) {
                 if let Some(p) = self.files.get(self.current) {
