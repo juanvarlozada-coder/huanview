@@ -253,7 +253,7 @@ impl eframe::App for HuanApp {
         self.keys(ctx);
 
         TopBottomPanel::bottom("filmstrip")
-            .frame(Frame::none().fill(BG))
+            .frame(Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(6.0, 4.0)))
             .exact_height(FILM_H)
             .show(ctx, |ui| self.filmstrip(ui));
 
@@ -285,6 +285,7 @@ enum Ic {
     ZoomOut,
     Fit,
     Gear,
+    Refresh,
 }
 
 impl HuanApp {
@@ -392,6 +393,16 @@ impl HuanApp {
                     p.line_segment([c + d * 5.2, c + d * 8.0], mid);
                 }
             }
+            Ic::Refresh => {
+                p.circle_stroke(c, 6.5, mid);
+                // punta de flecha arriba-derecha (indicación de rotación)
+                let tri = [
+                    c + v(3.2, -7.4),
+                    c + v(7.8, -5.4),
+                    c + v(5.4, -2.2),
+                ];
+                p.add(egui::Shape::convex_polygon(tri.to_vec(), fg, Stroke::NONE));
+            }
         }
         resp.on_hover_text(tip.to_string())
     }
@@ -474,6 +485,12 @@ impl HuanApp {
                                 );
                             }
                             ui.separator();
+                        }
+                        // —— buscar actualizaciones manualmente ——
+                        if self.icon_button(ui, Ic::Refresh, self.t("check_now")).clicked() {
+                            self.update.available = None;
+                            self.update_rx = Some(updater_manual_check());
+                            set_pending_toast(self.t("checking").to_string());
                         }
                         // —— preferencias (ventana) ——
                         if self.icon_button(ui, Ic::Gear, self.t("prefs")).clicked() {
@@ -1098,7 +1115,8 @@ impl HuanApp {
                             );
                         }
                         if selected {
-                            ui.painter().rect_stroke(rect.expand(1.5), 7.0, Stroke::new(2.0_f32, ACCENT));
+                            // trazado interior para que el ScrollArea no lo recorte
+                            ui.painter().rect_stroke(rect.shrink(1.0), 6.0, Stroke::new(2.0_f32, ACCENT));
                             resp.scroll_to_me(Some(Align::Center));
                         }
                         if resp.clicked() && i != self.current {

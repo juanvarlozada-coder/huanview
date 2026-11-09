@@ -1,9 +1,9 @@
 ; Huanview — Windows installer (NSIS), multi-idioma
 !define APP "Huanview"
 !define APPLOWER "huanview"
-!define VERSION "0.1.4"
+!define VERSION "0.1.5"
 Name "${APP} ${VERSION}"
-OutFile "..\..\dist\Huanview-0.1.4-installer-win64.exe"
+OutFile "..\..\dist\Huanview-0.1.5-installer-win64.exe"
 Unicode true
 ManifestDPIAware true
 InstallDir "$LOCALAPPDATA\${APP}"

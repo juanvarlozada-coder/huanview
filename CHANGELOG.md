@@ -1,5 +1,10 @@
 # Changelog de Huanview
 
+## v0.1.5 — Correcciones y refino
+- **Bug visual corregido**: el marco azul de selección de las miniaturas ya no se recorta por los bordes de la tira de imágenes (margen interior + trazado del contorno dentro del recuadro).
+- **Idiomas**: la interfaz ahora sí se actualiza al instante al cambiar de idioma (el fallo venía del antiguo menú desplegable, que se tragaba los clics del selector).
+- **Buscar actualizaciones manualmente**: nuevo botón ⌗/⟳ en la barra superior (junto al engranaje) que lanza el chequeo al momento, además del que ya existía dentro de Ajustes → Actualizaciones.
+
 ## v0.1.4 — Iconos y preferencias organizadas
 - **Iconos vectoriales** (dibujados con el propio motor, escalan perfecto y sin fuentes) en la barra superior y el chip de zoom: lápiz ✏️, marcador 🖊️, borrador, carpeta (abrir), disquete con + (guardar como), lupa +/− para el zoom, marco de ajuste y engranaje de preferencias; al pasar el cursor aparece un tooltip explicativo en tu idioma.
 - **Ajustes en ventana**, ya no desplegable: se abre al pulsar el engranaje, con las preferencias **organizadas por categorías**:
