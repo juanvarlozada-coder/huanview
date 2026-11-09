@@ -1,5 +1,12 @@
 # Changelog de Huanview
 
+## v0.1.4 — Iconos y preferencias organizadas
+- **Iconos vectoriales** (dibujados con el propio motor, escalan perfecto y sin fuentes) en la barra superior y el chip de zoom: lápiz ✏️, marcador 🖊️, borrador, carpeta (abrir), disquete con + (guardar como), lupa +/− para el zoom, marco de ajuste y engranaje de preferencias; al pasar el cursor aparece un tooltip explicativo en tu idioma.
+- **Ajustes en ventana**, ya no desplegable: se abre al pulsar el engranaje, con las preferencias **organizadas por categorías**:
+  - 🗂 General (idioma)
+  - 🔄 Actualizaciones (chequeo automático + botón "Buscar ahora")
+  - ℹ️ Acerca de (versión + novedades/changelog)
+
 ## v0.1.3 — Multi-idioma
 - **Idiomas en la app**: Español, English y Português (⚙ → Idioma; se recuerda en `~/.config/huanview/settings.json`, con detección automática del idioma del sistema la primera vez).
 - **Todos los textos de la interfaz** traducidos: herramientas, archivos, avisos (descargas, anotaciones, errores) y ajustes.

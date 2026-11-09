@@ -4,7 +4,7 @@
 use eframe::egui;
 use egui::{
     Align, Align2, Color32, FontId, Frame, Pos2, Rect, ScrollArea, Sense, Stroke, TextureHandle,
-    TextureOptions, TopBottomPanel, Vec2, ViewportCommand,
+    TextureOptions, TopBottomPanel, Vec2, ViewportCommand, Window,
 };
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -82,6 +82,9 @@ pub struct HuanApp {
     auto_check: bool,
     /// idioma de la interfaz
     lang: Lang,
+    /// ventana de preferencias
+    prefs_open: bool,
+    prefs_cat: usize,
 }
 
 impl HuanApp {
@@ -127,6 +130,8 @@ impl HuanApp {
             update_rx: Some(update_rx),
             auto_check,
             lang,
+            prefs_open: false,
+            prefs_cat: 0,
         })
     }
 
@@ -257,6 +262,7 @@ impl eframe::App for HuanApp {
         });
 
         self.top_bar(ctx);
+        self.prefs_window(ctx);
         self.zoom_chip(ctx);
         self.hud_toast(ctx);
 
@@ -266,7 +272,130 @@ impl eframe::App for HuanApp {
 
 // ------------------------------------------------- top bar + zoom chip
 
+#[derive(Clone, Copy, PartialEq)]
+enum Ic {
+    Pan,
+    Pen,
+    Marker,
+    Erase,
+    Open,
+    Save,
+    SaveAs,
+    ZoomIn,
+    ZoomOut,
+    Fit,
+    Gear,
+}
+
 impl HuanApp {
+    /// Botón con icono vectorial dibujado a mano (sin depender de fuentes).
+    fn icon_button(&self, ui: &mut egui::Ui, ic: Ic, tip: &str) -> egui::Response {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), Sense::click());
+        let p = ui.painter();
+        if resp.hovered() {
+            p.rect_filled(rect, 5.0, Color32::from_rgba_premultiplied(255, 255, 255, 14));
+        }
+        let fg = if resp.hovered() { ACCENT } else { TEXT_DIM };
+        let thick = Stroke::new(2.6_f32, fg);
+        let mid = Stroke::new(1.8_f32, fg);
+        let thin = Stroke::new(1.3_f32, fg);
+        let c = rect.center();
+        let v = egui::vec2;
+        match ic {
+            Ic::Pan => {
+                p.line_segment([c - v(8.0, 0.0), c + v(8.0, 0.0)], mid);
+                p.line_segment([c - v(0.0, 8.0), c + v(0.0, 8.0)], mid);
+                for dx in [-1.0f32, 1.0] {
+                    let tip = c + v(dx * 9.5, 0.0);
+                    p.line_segment([tip, tip + v(-dx * 3.0, -2.5)], thin);
+                    p.line_segment([tip, tip + v(-dx * 3.0, 2.5)], thin);
+                }
+                for dy in [-1.0f32, 1.0] {
+                    let tip = c + v(0.0, dy * 9.5);
+                    p.line_segment([tip, tip + v(-2.5, -dy * 3.0)], thin);
+                    p.line_segment([tip, tip + v(2.5, -dy * 3.0)], thin);
+                }
+            }
+            Ic::Pen => {
+                p.line_segment([c + v(-3.5, 3.5), c + v(5.5, -5.5)], thick);
+                p.circle_filled(c + v(-5.5, 5.5), 1.6, fg);
+            }
+            Ic::Marker => {
+                p.line_segment([c + v(-2.5, 2.5), c + v(4.5, -4.5)], thick);
+                p.rect_filled(
+                    Rect::from_center_size(c + v(6.0, -6.0), Vec2::splat(4.0)),
+                    1.0,
+                    fg,
+                );
+            }
+            Ic::Erase => {
+                p.line_segment([c + v(-4.0, 4.0), c + v(4.5, -4.5)], Stroke::new(3.5_f32, fg));
+            }
+            Ic::Open => {
+                // carpeta
+                p.rect_stroke(
+                    Rect::from_min_max(c + v(-8.0, -4.0), c + v(8.0, 6.5)),
+                    1.5,
+                    thin,
+                );
+                p.line_segment([c + v(-8.0, -4.0), c + v(-5.5, -7.0)], mid);
+                p.line_segment([c + v(-5.5, -7.0), c + v(0.0, -7.0)], mid);
+                p.line_segment([c + v(0.0, -7.0), c + v(0.0, -4.0)], mid);
+            }
+            Ic::Save | Ic::SaveAs => {
+                p.rect_stroke(
+                    Rect::from_min_max(c + v(-7.5, -7.5), c + v(7.5, 7.5)),
+                    1.5,
+                    thin,
+                );
+                p.rect_filled(
+                    Rect::from_min_max(c + v(1.0, -7.5), c + v(5.5, -3.5)),
+                    0.5,
+                    fg,
+                );
+                p.rect_stroke(
+                    Rect::from_min_max(c + v(-5.0, -0.5), c + v(5.0, 6.0)),
+                    1.0,
+                    thin,
+                );
+                if ic == Ic::SaveAs {
+                    p.line_segment([c + v(5.0, 5.0), c + v(9.0, 9.0)], mid);
+                    p.line_segment([c + v(7.0, 7.0), c + v(7.0, 7.0)], mid);
+                    p.line_segment([c + v(4.8, 7.0), c + v(9.2, 7.0)], mid);
+                    p.line_segment([c + v(7.0, 4.8), c + v(7.0, 9.2)], mid);
+                }
+            }
+            Ic::ZoomIn | Ic::ZoomOut => {
+                p.circle_stroke(c + v(-2.0, -2.0), 5.0, mid);
+                p.line_segment([c + v(1.8, 1.8), c + v(7.5, 7.5)], thick);
+                p.line_segment([c + v(-4.5, -2.0), c + v(0.5, -2.0)], mid);
+                if ic == Ic::ZoomIn {
+                    p.line_segment([c + v(-2.0, -4.5), c + v(-2.0, 0.5)], mid);
+                }
+            }
+            Ic::Fit => {
+                p.rect_stroke(
+                    Rect::from_min_max(c + v(-7.0, -5.0), c + v(7.0, 5.0)),
+                    1.5,
+                    thin,
+                );
+                p.line_segment([c + v(3.5, -3.0), c + v(-3.5, 3.0)], mid);
+                let tip = c + v(3.5, -3.0);
+                p.line_segment([tip, tip + v(-2.5, 0.4)], thin);
+                p.line_segment([tip, tip + v(0.4, -2.5)], thin);
+            }
+            Ic::Gear => {
+                p.circle_stroke(c, 3.6, mid);
+                for k in 0..6 {
+                    let a = k as f32 * std::f32::consts::TAU / 6.0 + 0.26;
+                    let d = v(a.cos(), a.sin());
+                    p.line_segment([c + d * 5.2, c + d * 8.0], mid);
+                }
+            }
+        }
+        resp.on_hover_text(tip.to_string())
+    }
+
     /// Barra pequeña pegada arriba: dibujo, archivos y configuración.
     fn top_bar(&mut self, ctx: &egui::Context) {
         let name = self
@@ -294,33 +423,33 @@ impl HuanApp {
                     }
 
                     ui.separator();
-                    // —— herramientas de dibujo ——
-                    if gui_button(ui, self.t("view")) {
+                    // —— herramientas de dibujo (iconos) ——
+                    if self.icon_button(ui, Ic::Pan, self.t("view")).clicked() {
                         self.tool = Tool::Pan;
                     }
-                    if gui_button(ui, self.t("pen")) {
+                    if self.icon_button(ui, Ic::Pen, self.t("pen")).clicked() {
                         self.tool = Tool::Pen;
                     }
-                    if gui_button(ui, self.t("marker")) {
+                    if self.icon_button(ui, Ic::Marker, self.t("marker")).clicked() {
                         self.tool = Tool::Marker;
                     }
                     ui.add_space(2.0);
                     for (ci, col) in PEN_COLORS.iter().enumerate() {
                         self.color_button(ui, *col, ci);
                     }
-                    if gui_button(ui, self.t("erase")) {
+                    if self.icon_button(ui, Ic::Erase, self.t("erase")).clicked() {
                         self.clear_annotations();
                     }
 
                     ui.separator();
-                    // —— archivo ——
-                    if gui_button(ui, self.t("open")) {
+                    // —— archivo (iconos) ——
+                    if self.icon_button(ui, Ic::Open, self.t("open")).clicked() {
                         self.open_file_dialog();
                     }
-                    if gui_button(ui, self.t("save")) {
+                    if self.icon_button(ui, Ic::Save, self.t("save")).clicked() {
                         self.n_export_ann();
                     }
-                    if gui_button(ui, self.t("save_as")) {
+                    if self.icon_button(ui, Ic::SaveAs, self.t("save_as")).clicked() {
                         self.export_annotated_png();
                     }
 
@@ -346,80 +475,166 @@ impl HuanApp {
                             }
                             ui.separator();
                         }
-                        // —— configuración ——
-                        ui.menu_button("⚙", |ui| {
-                            ui.horizontal(|ui| {
+                        // —— preferencias (ventana) ——
+                        if self.icon_button(ui, Ic::Gear, self.t("prefs")).clicked() {
+                            self.prefs_open = true;
+                        }
+                    });
+                });
+            });
+    }
+
+    /// Ventana de preferencias con categorías (en lugar del desplegable).
+    fn prefs_window(&mut self, ctx: &egui::Context) {
+        if !self.prefs_open {
+            return;
+        }
+        let mut open = self.prefs_open;
+        let resp_window = Window::new(self.t("prefs"))
+            .open(&mut open)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.set_min_width(540.0);
+                ui.horizontal(|ui| {
+                    // —— columna de categorías ——
+                    ui.vertical(|ui| {
+                        let cats: [(&str, usize); 3] = [
+                            ("🗂", 0),
+                            ("🔄", 1),
+                            ("ℹ️", 2),
+                        ];
+                        for (icon, cat) in cats {
+                            let name = match cat {
+                                0 => self.t("cat_general"),
+                                1 => self.t("cat_updates"),
+                                _ => self.t("cat_about"),
+                            };
+                            let sel = self.prefs_cat == cat;
+                            let fill = if sel {
+                                Color32::from_rgba_premultiplied(93, 158, 251, 55)
+                            } else {
+                                Color32::TRANSPARENT
+                            };
+                            let txt = format!("  {icon} {name}  ");
+                            let b = egui::Button::new(
+                                egui::RichText::new(txt).size(13.0),
+                            )
+                            .fill(fill)
+                            .min_size(Vec2::new(140.0, 24.0));
+                            if ui.add(b).clicked() {
+                                self.prefs_cat = cat;
+                            }
+                        }
+                    });
+                    ui.separator();
+
+                    // —— contenido según categoría ——
+                    ui.vertical(|ui| {
+                        match self.prefs_cat {
+                            0 => {
+                                // ————————————————— General
+                                ui.label(egui::RichText::new(self.t("language")).small().color(TEXT_DIM));
+                                ui.add_space(2.0);
+                                egui::ComboBox::from_id_source("langsel")
+                                    .selected_text(
+                                        lang::LANGS
+                                            .iter()
+                                            .find(|(_, l)| *l == self.lang)
+                                            .map(|(n, _)| *n)
+                                            .unwrap_or("Español"),
+                                    )
+                                    .width(180.0)
+                                    .show_ui(ui, |ui| {
+                                        for (name, l) in lang::LANGS {
+                                            let sel = ui.selectable_value(
+                                                &mut self.lang,
+                                                l,
+                                                name,
+                                            );
+                                            if sel.changed() {
+                                                lang::save_lang(self.lang);
+                                            }
+                                        }
+                                    });
+                            }
+                            1 => {
+                                // ————————————————— Actualizaciones
+                                let check_txt = self.t("check_updates");
+                                if ui.checkbox(&mut self.auto_check, check_txt).changed() {
+                                    save_config(&updater::UpdaterConfig {
+                                        auto_check: self.auto_check,
+                                        last_check: None,
+                                    });
+                                }
+                                ui.add_space(6.0);
+                                if ui.button(self.t("check_now")).clicked() {
+                                    self.update.available = None;
+                                    self.update_rx = Some(updater_manual_check());
+                                    set_pending_toast(self.t("checking").to_string());
+                                }
+                                if let Some(rel) = self.update.available.clone() {
+                                    ui.add_space(6.0);
+                                    ui.label(
+                                        egui::RichText::new(format!(
+                                            "v{} {}",
+                                            rel.version,
+                                            self.t("available")
+                                        ))
+                                        .strong()
+                                        .color(ACCENT),
+                                    );
+                                    if self.update.progress.is_none()
+                                        && ui.button(self.t("install")).clicked()
+                                    {
+                                        self.start_update_download();
+                                    }
+                                    if self.update.progress.is_some() {
+                                        let frac =
+                                            (self.update.progress_pct as f32 / 100.0)
+                                                .clamp(0.0, 1.0);
+                                        ui.add(
+                                            egui::ProgressBar::new(frac)
+                                                .desired_width(120.0)
+                                                .show_percentage(),
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {
+                                // ————————————————— Acerca de
                                 ui.label(
                                     egui::RichText::new(format!(
-                                        "Huanview v{}",
+                                        "{} v{}",
+                                        self.t("about_label"),
                                         env!("CARGO_PKG_VERSION")
                                     ))
                                     .strong(),
                                 );
                                 ui.label(
-                                    egui::RichText::new(self.t("version_av")).color(if self
-                                        .update
-                                        .available
-                                        .is_some()
-                                    {
-                                        ACCENT
-                                    } else {
-                                        TEXT_DIM
-                                    }),
+                                    egui::RichText::new(self.t("about_sub"))
+                                        .small()
+                                        .color(TEXT_DIM),
                                 );
-                            });
-                            ui.separator();
-                            ui.add_space(2.0);
-                            ui.label(egui::RichText::new(self.t("whats_new")).strong());
-                            ScrollArea::vertical()
-                                .max_height(160.0)
-                                .show(ui, |ui| {
-                                    ui.add(
-                                        egui::TextEdit::multiline(&mut include_str!(
-                                            "../CHANGELOG.md"
-                                        ).to_string())
+                                ui.separator();
+                                ui.label(egui::RichText::new(self.t("whats_new")).strong());
+                                ScrollArea::vertical()
+                                    .max_height(220.0)
+                                    .show(ui, |ui| {
+                                        ui.add(
+                                            egui::TextEdit::multiline(
+                                                &mut include_str!("../CHANGELOG.md").to_string(),
+                                            )
                                             .interactive(false)
-                                            .desired_width(420.0)
+                                            .desired_width(430.0)
                                             .font(FontId::proportional(11.0)),
-                                    );
-                                });
-                            ui.separator();
-                            let check_txt = self.t("check_updates");
-                            if ui.checkbox(&mut self.auto_check, check_txt).changed() {
-                                save_config(&updater::UpdaterConfig {
-                                    auto_check: self.auto_check,
-                                    last_check: None,
-                                });
-                            }
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(self.t("language")).small());
-                            });
-                            egui::ComboBox::from_id_source("langsel")
-                                .selected_text(
-                                    lang::LANGS
-                                        .iter()
-                                        .find(|(_, l)| *l == self.lang)
-                                        .map(|(n, _)| *n)
-                                        .unwrap_or("Español"),
-                                )
-                                .width(140.0)
-                                .show_ui(ui, |ui| {
-                                    for (name, l) in lang::LANGS {
-                                        let selected = ui.selectable_value(
-                                            &mut self.lang,
-                                            l,
-                                            name,
                                         );
-                                        if selected.changed() {
-                                            lang::save_lang(self.lang);
-                                        }
-                                    }
-                                });
-                        });
+                                    });
+                            }
+                        }
                     });
                 });
             });
+        self.prefs_open = open && resp_window.is_some();
     }
 
     /// Chip de zoom esquina inferior derecha (encima del filmstrip).
@@ -438,8 +653,8 @@ impl HuanApp {
                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            if gui_button(ui, "−") {
-                                self.set_zoom_target(self.zoom_target / 1.3);
+                            if self.icon_button(ui, Ic::ZoomIn, self.t("zoom_in")).clicked() {
+                                self.set_zoom_target(self.zoom_target * 1.3);
                             }
                             ui.label(
                                 egui::RichText::new(zoom_pct)
@@ -450,12 +665,12 @@ impl HuanApp {
                                         ACCENT
                                     }),
                             );
-                            if gui_button(ui, "Ajustar") {
+                            if self.icon_button(ui, Ic::ZoomOut, self.t("zoom_out")).clicked() {
+                                self.set_zoom_target(self.zoom_target / 1.3);
+                            }
+                            if self.icon_button(ui, Ic::Fit, self.t("fit")).clicked() {
                                 self.zoom_target = 1.0;
                                 self.offset_target = Vec2::ZERO;
-                            }
-                            if gui_button(ui, "+") {
-                                self.set_zoom_target(self.zoom_target * 1.3);
                             }
                         });
                     });
@@ -1007,6 +1222,19 @@ impl HuanApp {
 }
 
 // ----------------------------------------------------------- updater glue
+
+/// Chequeo manual (ignora auto_check): usado por el botón "Buscar ahora".
+fn updater_manual_check() -> Receiver<UpdateMsg> {
+    let (tx, rx) = mpsc::channel::<UpdateMsg>();
+    std::thread::Builder::new()
+        .name("huanview-updater-manual".into())
+        .spawn(move || {
+            let res = check_for_update();
+            let _ = tx.send(UpdateMsg::Checked(res));
+        })
+        .unwrap();
+    rx
+}
 
 fn updater_start_check() -> Receiver<UpdateMsg> {
     let (tx, rx) = mpsc::channel::<UpdateMsg>();
