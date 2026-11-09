@@ -64,6 +64,9 @@ pub struct Prefs {
     /// atajos redefinidos por el usuario (solo los que cambian)
     #[serde(default)]
     pub bindings: Bindings,
+    /// ¿tema claro? (por defecto oscuro)
+    #[serde(default)]
+    pub light: bool,
 }
 
 fn default_true() -> bool {
@@ -86,6 +89,7 @@ fn read_settings() -> Prefs {
         lang: detect_os_lang(),
         nav_arrows_hover: true,
         bindings: Default::default(),
+        light: false,
     }
 }
 
@@ -100,6 +104,17 @@ fn detect_os_lang() -> Lang {
 pub fn save_lang(lang: Lang) {
     let mut p = read_settings();
     p.lang = lang;
+    save_prefs(&p);
+}
+
+pub fn load_theme() -> bool {
+    read_settings().light
+}
+
+/// Guarda el tema elegido preservando el resto de preferencias.
+pub fn save_theme(light: bool) {
+    let mut p = read_settings();
+    p.light = light;
     save_prefs(&p);
 }
 
@@ -159,6 +174,9 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         (Lang::Es, "shortcuts_hint") => "Haz clic en la combinación y pulsa la nueva tecla",
         (Lang::Es, "shortcut_set") => "Atajo asignado: {k}",
         (Lang::Es, "hand_note") => "Mantén Espacio para usar la mano temporalmente, sin importar la herramienta (fijo, no se puede cambiar).",
+        (Lang::Es, "theme_light") => "Tema claro",
+        (Lang::Es, "theme") => "Tema",
+        (Lang::Es, "menu") => "Menú",
         (Lang::Es, "copy_failed") => "No se pudo copiar:",
         (Lang::Es, "copied") => "Imagen copiada al portapapeles",
         (Lang::Es, "capture_prompt") => "Pulsa una tecla… (Esc para cancelar)",
@@ -215,6 +233,9 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         (Lang::En, "shortcuts_hint") => "Click a binding and press the new key",
         (Lang::En, "shortcut_set") => "Shortcut set: {k}",
         (Lang::En, "hand_note") => "Hold Space for the temporary hand tool regardless of the active tool (fixed).",
+        (Lang::En, "theme_light") => "Light theme",
+        (Lang::En, "theme") => "Theme",
+        (Lang::En, "menu") => "Menu",
         (Lang::En, "copy_failed") => "Couldn't copy:",
         (Lang::En, "copied") => "Image copied to clipboard",
         (Lang::En, "capture_prompt") => "Press a key… (Esc to cancel)",
@@ -271,6 +292,9 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         (Lang::Pt, "shortcuts_hint") => "Clique no atalho e pressione a nova tecla",
         (Lang::Pt, "shortcut_set") => "Atalho definido: {k}",
         (Lang::Pt, "hand_note") => "Mantenha Espaço para usar a mão temporariamente (fixo).",
+        (Lang::Pt, "theme_light") => "Tema claro",
+        (Lang::Pt, "theme") => "Tema",
+        (Lang::Pt, "menu") => "Menu",
         (Lang::Pt, "copy_failed") => "Não foi possível copiar:",
         (Lang::Pt, "copied") => "Imagem copiada para a área de transferência",
         (Lang::Pt, "capture_prompt") => "Pressione uma tecla… (Esc para cancelar)",

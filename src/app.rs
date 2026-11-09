@@ -25,11 +25,38 @@ enum UpdateMsg {
 }
 use crate::util::collect_images;
 
-const BG: Color32 = Color32::from_rgb(24, 24, 27);
-const CHIP_BG: Color32 = Color32::from_rgba_premultiplied(24, 24, 28, 210);
-const TEXT: Color32 = Color32::from_rgb(228, 228, 232);
-const TEXT_DIM: Color32 = Color32::from_rgb(150, 150, 156);
 const ACCENT: Color32 = Color32::from_rgb(93, 158, 251);
+
+// ------- tema (oscuro / claro) -------
+static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn is_light() -> bool {
+    LIGHT.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub fn set_light(light: bool) {
+    LIGHT.store(light, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn bg() -> Color32 {
+    if is_light() { Color32::from_rgb(240, 240, 242) } else { Color32::from_rgb(24, 24, 27) }
+}
+
+fn chip_bg() -> Color32 {
+    if is_light() { Color32::from_rgba_premultiplied(255, 255, 255, 230) } else { Color32::from_rgba_premultiplied(24, 24, 28, 210) }
+}
+
+fn text_col() -> Color32 {
+    if is_light() { Color32::from_rgb(30, 30, 34) } else { Color32::from_rgb(228, 228, 232) }
+}
+
+fn text_dim() -> Color32 {
+    if is_light() { Color32::from_rgb(110, 110, 118) } else { Color32::from_rgb(150, 150, 156) }
+}
+
+fn frame_col() -> Color32 {
+    if is_light() { Color32::from_rgb(216, 216, 220) } else { Color32::from_rgb(32, 32, 36) }
+}
 const FILM_H: f32 = 92.0;
 const PEN_COLORS: [Color32; 5] = [
     Color32::from_rgb(93, 158, 251),
@@ -92,6 +119,8 @@ pub struct HuanApp {
     // deshacer/rehacer anotaciones: (archivo, estado)
     undo_s: Vec<(PathBuf, Vec<Annotation>)>,
     redo_s: Vec<(PathBuf, Vec<Annotation>)>,
+    /// ¿tema claro?
+    light: bool,
 }
 
 impl HuanApp {
@@ -102,9 +131,9 @@ impl HuanApp {
     pub fn new(cc: &eframe::CreationContext<'_>, start: PathBuf) -> Box<dyn eframe::App> {
         cc.egui_ctx.style_mut(|s| {
             s.visuals.dark_mode = true;
-            s.visuals.panel_fill = BG;
-            s.visuals.window_fill = BG;
-            s.visuals.override_text_color = Some(TEXT);
+            s.visuals.panel_fill = bg();
+            s.visuals.window_fill = bg();
+            s.visuals.override_text_color = Some(text_col());
         });
         let (files, current) = collect_images(&start);
         let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6);
@@ -143,6 +172,7 @@ impl HuanApp {
             capture: None,
             undo_s: Vec::new(),
             redo_s: Vec::new(),
+            light: lang::load_theme(),
         })
     }
 
@@ -236,6 +266,14 @@ fn take_pending_toast() -> Option<(String, Instant)> {
 impl eframe::App for HuanApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Title(self.headline()));
+        // aplicar tema (oscuro/claro)
+        set_light(self.light);
+        ctx.style_mut(|s| {
+            s.visuals.dark_mode = !self.light;
+            s.visuals.panel_fill = bg();
+            s.visuals.window_fill = bg();
+            s.visuals.override_text_color = Some(text_col());
+        });
 
         for m in self.loader.poll() {
             self.apply_loaded(ctx, m);
@@ -264,15 +302,42 @@ impl eframe::App for HuanApp {
         self.keys(ctx);
 
         TopBottomPanel::bottom("filmstrip")
-            .frame(Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(6.0, 4.0)))
+            .frame(Frame::none().fill(bg()).inner_margin(egui::Margin::symmetric(6.0, 4.0)))
             .exact_height(FILM_H)
             .show(ctx, |ui| self.filmstrip(ui));
+
+        // nombre del archivo centrado: entre la imagen y las miniaturas
+        let name = self
+            .files
+            .get(self.current)
+            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
+            .unwrap_or("…")
+            .to_string();
+        let counter = if self.files.is_empty() {
+            String::new()
+        } else {
+            format!("  ·  {} / {}", self.current + 1, self.files.len())
+        };
+        TopBottomPanel::bottom("titlebar")
+            .frame(Frame::none().fill(bg()))
+            .exact_height(20.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::top_down_justified(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("{}{}", name, counter))
+                            .font(FontId::proportional(11.0))
+                            .color(text_dim()),
+                    );
+                });
+            });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             self.canvas(ctx, ui);
         });
 
-        self.top_bar(ctx);
+        self.app_menu(ctx);
+        self.tools_bar(ctx);
         self.prefs_window(ctx);
         self.zoom_chip(ctx);
         self.hud_toast(ctx);
@@ -289,9 +354,6 @@ enum Ic {
     Pen,
     Marker,
     Erase,
-    Open,
-    Save,
-    SaveAs,
     ZoomIn,
     ZoomOut,
     Fit,
@@ -307,7 +369,7 @@ impl HuanApp {
         if resp.hovered() {
             p.rect_filled(rect, 5.0, Color32::from_rgba_premultiplied(255, 255, 255, 14));
         }
-        let fg = if resp.hovered() { ACCENT } else { TEXT_DIM };
+        let fg = if resp.hovered() { ACCENT } else { text_dim() };
         let thick = Stroke::new(2.6_f32, fg);
         let mid = Stroke::new(1.8_f32, fg);
         let thin = Stroke::new(1.3_f32, fg);
@@ -342,40 +404,6 @@ impl HuanApp {
             }
             Ic::Erase => {
                 p.line_segment([c + v(-4.0, 4.0), c + v(4.5, -4.5)], Stroke::new(3.5_f32, fg));
-            }
-            Ic::Open => {
-                // carpeta
-                p.rect_stroke(
-                    Rect::from_min_max(c + v(-8.0, -4.0), c + v(8.0, 6.5)),
-                    1.5,
-                    thin,
-                );
-                p.line_segment([c + v(-8.0, -4.0), c + v(-5.5, -7.0)], mid);
-                p.line_segment([c + v(-5.5, -7.0), c + v(0.0, -7.0)], mid);
-                p.line_segment([c + v(0.0, -7.0), c + v(0.0, -4.0)], mid);
-            }
-            Ic::Save | Ic::SaveAs => {
-                p.rect_stroke(
-                    Rect::from_min_max(c + v(-7.5, -7.5), c + v(7.5, 7.5)),
-                    1.5,
-                    thin,
-                );
-                p.rect_filled(
-                    Rect::from_min_max(c + v(1.0, -7.5), c + v(5.5, -3.5)),
-                    0.5,
-                    fg,
-                );
-                p.rect_stroke(
-                    Rect::from_min_max(c + v(-5.0, -0.5), c + v(5.0, 6.0)),
-                    1.0,
-                    thin,
-                );
-                if ic == Ic::SaveAs {
-                    p.line_segment([c + v(5.0, 5.0), c + v(9.0, 9.0)], mid);
-                    p.line_segment([c + v(7.0, 7.0), c + v(7.0, 7.0)], mid);
-                    p.line_segment([c + v(4.8, 7.0), c + v(9.2, 7.0)], mid);
-                    p.line_segment([c + v(7.0, 4.8), c + v(7.0, 9.2)], mid);
-                }
             }
             Ic::ZoomIn | Ic::ZoomOut => {
                 p.circle_stroke(c + v(-2.0, -2.0), 5.0, mid);
@@ -418,97 +446,116 @@ impl HuanApp {
         resp.on_hover_text(tip.to_string())
     }
 
-    /// Barra pequeña pegada arriba: dibujo, archivos y configuración.
-    fn top_bar(&mut self, ctx: &egui::Context) {
-        let name = self
-            .files
-            .get(self.current)
-            .and_then(|p| p.file_name().and_then(|s| s.to_str()))
-            .unwrap_or(lang::tr(self.lang, "no_images"))
-            .to_string();
-        let counter = if self.files.is_empty() {
-            String::new()
-        } else {
-            format!("{} / {}", self.current + 1, self.files.len())
-        };
-
-        TopBottomPanel::top("htop")
-            .frame(Frame::none().fill(CHIP_BG).inner_margin(egui::Margin::symmetric(10.0, 3.0)))
-            .resizable(false)
+    /// Menú hamburguesa a la IZQUIERDA: archivo, copiar, actualizar y ajustes.
+    fn app_menu(&mut self, ctx: &egui::Context) {
+        let upd = self.update.available.clone();
+        egui::Area::new("hmenu".into())
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::LEFT_TOP, [10.0, 10.0])
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(name).font(FontId::proportional(12.0)),
-                    );
-                    if !counter.is_empty() {
-                        ui.label(egui::RichText::new(counter).small().color(TEXT_DIM));
-                    }
-
-                    ui.separator();
-                    // —— herramientas de dibujo (iconos) ——
-                    if self.icon_button(ui, Ic::Pan, self.t("view")).clicked() {
-                        self.tool = Tool::Pan;
-                    }
-                    if self.icon_button(ui, Ic::Pen, self.t("pen")).clicked() {
-                        self.tool = Tool::Pen;
-                    }
-                    if self.icon_button(ui, Ic::Marker, self.t("marker")).clicked() {
-                        self.tool = Tool::Marker;
-                    }
-                    ui.add_space(2.0);
-                    for (ci, col) in PEN_COLORS.iter().enumerate() {
-                        self.color_button(ui, *col, ci);
-                    }
-                    if self.icon_button(ui, Ic::Erase, self.t("erase")).clicked() {
-                        self.clear_annotations();
-                    }
-
-                    ui.separator();
-                    // —— archivo (iconos) ——
-                    if self.icon_button(ui, Ic::Open, self.t("open")).clicked() {
-                        self.open_file_dialog();
-                    }
-                    if self.icon_button(ui, Ic::Save, self.t("save")).clicked() {
-                        self.n_export_ann();
-                    }
-                    if self.icon_button(ui, Ic::SaveAs, self.t("save_as")).clicked() {
-                        self.export_annotated_png();
-                    }
-
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        // —— actualización disponible ——
-                        if let Some(rel) = self.update.available.clone() {
-                            ui.label(
-                                egui::RichText::new(format!("v{} {}", rel.version, self.t("available")))
+                Frame::window(&ctx.style())
+                    .fill(chip_bg())
+                    .inner_margin(egui::Margin::symmetric(5.0, 2.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.menu_button("☰", |ui| {
+                                if ui.button(self.t("open")).clicked() {
+                                    ui.close_menu();
+                                    self.open_file_dialog();
+                                }
+                                if ui.button(self.t("save")).clicked() {
+                                    ui.close_menu();
+                                    self.n_export_ann();
+                                }
+                                if ui.button(self.t("save_as")).clicked() {
+                                    ui.close_menu();
+                                    self.export_annotated_png();
+                                }
+                                if ui.button(self.t("act_copy")).clicked() {
+                                    ui.close_menu();
+                                    self.copy_image();
+                                }
+                                ui.separator();
+                                if ui.button(self.t("check_now")).clicked() {
+                                    ui.close_menu();
+                                    self.update.available = None;
+                                    self.update_rx = Some(updater_manual_check());
+                                    set_pending_toast(self.t("checking").to_string());
+                                }
+                                if ui.button(self.t("prefs")).clicked() {
+                                    ui.close_menu();
+                                    self.prefs_open = true;
+                                }
+                            });
+                            // —— actualización disponible ——
+                            if let Some(rel) = upd {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "v{} {}",
+                                        rel.version,
+                                        self.t("available")
+                                    ))
                                     .strong()
                                     .color(ACCENT),
-                            );
-                            if self.update.progress.is_none() && gui_button(ui, self.t("install")) {
-                                self.start_update_download();
-                            }
-                            if self.update.progress.is_some() {
-                                let frac =
-                                    (self.update.progress_pct as f32 / 100.0).clamp(0.0, 1.0);
-                                ui.add(
-                                    egui::ProgressBar::new(frac)
-                                        .desired_width(80.0)
-                                        .show_percentage(),
                                 );
+                                if self.update.progress.is_none()
+                                    && ui.button(self.t("install")).clicked()
+                                {
+                                    self.start_update_download();
+                                }
+                                if self.update.progress.is_some() {
+                                    let frac = (self.update.progress_pct as f32 / 100.0)
+                                        .clamp(0.0, 1.0);
+                                    ui.add(
+                                        egui::ProgressBar::new(frac)
+                                            .desired_width(70.0)
+                                            .show_percentage(),
+                                    );
+                                }
+                                ui.separator();
                             }
-                            ui.separator();
-                        }
-                        // —— buscar actualizaciones manualmente ——
-                        if self.icon_button(ui, Ic::Refresh, self.t("check_now")).clicked() {
-                            self.update.available = None;
-                            self.update_rx = Some(updater_manual_check());
-                            set_pending_toast(self.t("checking").to_string());
-                        }
-                        // —— preferencias (ventana) ——
-                        if self.icon_button(ui, Ic::Gear, self.t("prefs")).clicked() {
-                            self.prefs_open = true;
-                        }
+                            if self.icon_button(ui, Ic::Refresh, self.t("check_now")).clicked() {
+                                self.update.available = None;
+                                self.update_rx = Some(updater_manual_check());
+                                set_pending_toast(self.t("checking").to_string());
+                            }
+                            if self.icon_button(ui, Ic::Gear, self.t("prefs")).clicked() {
+                                self.prefs_open = true;
+                            }
+                        });
                     });
-                });
+            });
+    }
+
+    /// Herramientas de dibujo a la DERECHA, separadas del menú.
+    fn tools_bar(&mut self, ctx: &egui::Context) {
+        egui::Area::new("htools".into())
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_TOP, [-10.0, 10.0])
+            .show(ctx, |ui| {
+                Frame::window(&ctx.style())
+                    .fill(chip_bg())
+                    .inner_margin(egui::Margin::symmetric(5.0, 2.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if self.icon_button(ui, Ic::Pan, self.t("view")).clicked() {
+                                self.tool = Tool::Pan;
+                            }
+                            if self.icon_button(ui, Ic::Pen, self.t("pen")).clicked() {
+                                self.tool = Tool::Pen;
+                            }
+                            if self.icon_button(ui, Ic::Marker, self.t("marker")).clicked() {
+                                self.tool = Tool::Marker;
+                            }
+                            ui.add_space(1.0);
+                            for (ci, col) in PEN_COLORS.iter().enumerate() {
+                                self.color_button(ui, *col, ci);
+                            }
+                            if self.icon_button(ui, Ic::Erase, self.t("erase")).clicked() {
+                                self.clear_annotations();
+                            }
+                        });
+                    });
             });
     }
 
@@ -521,8 +568,8 @@ impl HuanApp {
         let resp_window = Window::new(self.t("prefs"))
             .open(&mut open)
             .resizable(false)
+            .fixed_size([560.0, 340.0])
             .show(ctx, |ui| {
-                ui.set_min_width(540.0);
                 ui.horizontal(|ui| {
                     // —— columna de categorías ——
                     ui.vertical(|ui| {
@@ -563,7 +610,15 @@ impl HuanApp {
                         match self.prefs_cat {
                             0 => {
                                 // ————————————————— General
-                                ui.label(egui::RichText::new(self.t("language")).small().color(TEXT_DIM));
+                                ui.label(egui::RichText::new(self.t("theme")).small().color(text_dim()));
+                                let theme_txt = self.t("theme_light");
+                                if ui.checkbox(&mut self.light, theme_txt).changed() {
+                                    lang::save_theme(self.light);
+                                }
+                                ui.add_space(10.0);
+                                ui.separator();
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new(self.t("language")).small().color(text_dim()));
                                 ui.add_space(2.0);
                                 egui::ComboBox::from_id_source("langsel")
                                     .selected_text(
@@ -635,7 +690,7 @@ impl HuanApp {
                                 ui.label(
                                     egui::RichText::new(self.t("shortcuts_hint"))
                                         .small()
-                                        .color(TEXT_DIM),
+                                        .color(text_dim()),
                                 );
                                 ui.add_space(4.0);
                                 ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
@@ -671,7 +726,7 @@ impl HuanApp {
                                                 };
                                                 let accent = self.capture.as_deref() == Some(act);
                                                 let rt = egui::RichText::new(txt)
-                                                    .color(if accent { ACCENT } else { TEXT });
+                                                    .color(if accent { ACCENT } else { text_col() });
                                                 let rt = if accent { rt.strong() } else { rt };
                                                 let b = egui::Button::new(rt);
                                                 if ui.add(b).clicked() {
@@ -682,7 +737,7 @@ impl HuanApp {
                                         });
                                     ui.add_space(4.0);
                                     ui.label(
-                                        egui::RichText::new(self.t("hand_note")).small().color(TEXT_DIM),
+                                        egui::RichText::new(self.t("hand_note")).small().color(text_dim()),
                                     );
                                 });
                             }
@@ -699,7 +754,7 @@ impl HuanApp {
                                 ui.label(
                                     egui::RichText::new(self.t("about_sub"))
                                         .small()
-                                        .color(TEXT_DIM),
+                                        .color(text_dim()),
                                 );
                                 ui.separator();
                                 ui.label(egui::RichText::new(self.t("whats_new")).strong());
@@ -735,7 +790,7 @@ impl HuanApp {
             .anchor(egui::Align2::RIGHT_BOTTOM, [-14.0, -(FILM_H + 14.0)])
             .show(ctx, |ui| {
                 Frame::window(&ctx.style())
-                    .fill(CHIP_BG)
+                    .fill(chip_bg())
                     .inner_margin(egui::Margin::symmetric(6.0, 2.0))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -746,7 +801,7 @@ impl HuanApp {
                                 egui::RichText::new(zoom_pct)
                                     .small()
                                     .color(if self.zoom_target <= 1.001 {
-                                        TEXT_DIM
+                                        text_dim()
                                     } else {
                                         ACCENT
                                     }),
@@ -768,7 +823,7 @@ impl HuanApp {
         let sel = self.draw_color == color && matches!(self.tool, Tool::Pen | Tool::Marker);
         ui.painter().rect_filled(rect, 9.0, color);
         if sel {
-            ui.painter().rect_stroke(rect.shrink(1.5), 9.0, Stroke::new(2.0_f32, TEXT));
+            ui.painter().rect_stroke(rect.shrink(1.5), 9.0, Stroke::new(2.0_f32, text_col()));
         }
         if resp.clicked() {
             self.draw_color = color;
@@ -899,14 +954,6 @@ impl HuanApp {
         Ok(img)
     }
 }
-
-fn gui_button(ui: &mut egui::Ui, label: &str) -> bool {
-    let b = egui::Button::new(egui::RichText::new(label).size(14.0))
-        .fill(Color32::TRANSPARENT)
-        .min_size(Vec2::new(0.0, 22.0));
-    ui.add(b).clicked()
-}
-
 // --------------------------------------------------------------- TOAST chips
 
 impl HuanApp {
@@ -979,7 +1026,7 @@ impl HuanApp {
                 Align2::CENTER_CENTER,
                 crate::lang::tr(self.lang, "loading"),
                 FontId::proportional(14.0),
-                TEXT_DIM,
+                text_dim(),
             );
         }
 
@@ -1171,7 +1218,7 @@ impl HuanApp {
                         let tex = self.thumbs.get(p).map(|t| (t.id(), t.size_vec2()));
                         let (rect, resp) =
                             ui.allocate_exact_size(THUMB_SIZE, Sense::click());
-                        ui.painter().rect_filled(rect, 6.0, FRAME);
+                        ui.painter().rect_filled(rect, 6.0, frame_col());
                         if let Some((id, size)) = tex {
                             let r = fit_inside(size, rect.size());
                             let dst = Rect::from_center_size(rect.center(), r);
@@ -1187,7 +1234,7 @@ impl HuanApp {
                                 Align2::CENTER_CENTER,
                                 "…",
                                 FontId::proportional(14.0),
-                                TEXT_DIM,
+                                text_dim(),
                             );
                         }
                         if selected {
@@ -1205,7 +1252,6 @@ impl HuanApp {
 }
 
 const THUMB_SIZE: Vec2 = Vec2::new(130.0, 76.0);
-const FRAME: Color32 = Color32::from_rgb(32, 32, 36);
 
 fn fit_inside(src: Vec2, dst: Vec2) -> Vec2 {
     let k = (dst.x / src.x.max(1.0)).min(dst.y / src.y.max(1.0));

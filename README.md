@@ -52,16 +52,16 @@ xdg-mime default huanview.desktop image/jpeg image/png image/webp
 
 ## Publicación
 Paquetes listos en `dist/` (y autogenerables con GitHub Actions en `.github/workflows/build.yml`):
-- `Huanview-0.1.6-installer-win64.exe` — instalador NSIS para Windows x64 (accesos directos, desinstalador, HKCU)
-- `Huanview-0.1.6-portable-win64.zip` — versión portable de Windows
-- `Huanview-0.1.6-x86_64.AppImage` — Linux (X11 y Wayland), empacado con linuxdeploy + appimagetool
+- `Huanview-0.1.7-installer-win64.exe` — instalador NSIS para Windows x64 (accesos directos, desinstalador, HKCU)
+- `Huanview-0.1.7-portable-win64.zip` — versión portable de Windows
+- `Huanview-0.1.7-x86_64.AppImage` — Linux (X11 y Wayland), empacado con linuxdeploy + appimagetool
 
 Para reproducir el AppImage localmente:
 ```sh
 cargo build --release
 linuxdeploy --appdir AppDir --executable AppDir/usr/bin/huanview \
   --desktop-file AppDir/huanview.desktop --icon-file AppDir/huanview.png
-appimagetool AppDir Huanview-0.1.6-x86_64.AppImage
+appimagetool AppDir Huanview-0.1.7-x86_64.AppImage
 ```
 
 ## Auto-actualización

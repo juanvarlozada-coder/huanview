@@ -1,5 +1,12 @@
 # Changelog de Huanview
 
+## v0.1.7 — Interfaz reorganizada y temas
+- **Nombre del archivo** centrado entre la imagen y la tira de miniaturas (con contador i/<total>), ya no en la barra superior.
+- **Menú hamburguesa ☰ a la izquierda**: opciones de archivo (Abrir, Guardar, Guardar como), **Copiar imagen al portapapeles**, buscar actualizaciones y abrir ajustes — ahora compacto y ordenado.
+- **Herramientas de dibujo a la derecha**, separadas del menú: Vista, Lápiz, Marcador, colores y Borrar.
+- **Ajustes con tamaño fijo** (560×340) sin importar la categoría activa.
+- **Tema claro/oscuro** conmutable en Ajustes → General (se recuerda entre sesiones).
+
 ## v0.1.6 — Atajos de teclado personalizables
 - **Ajustes → ⌨ Atajos**: haz clic en una combinación y pulsa la nueva tecla para reasignarla (Esc cancela). Se guarda en `~/.config/huanview/settings.json`.
 - Acciones configurables: **Copiar imagen** (Ctrl+C), **Deshacer** (Ctrl+Z), **Rehacer** (Ctrl+Y), herramientas **Vista/Lápiz/Marcador** (V/A/M) y **Abrir ajustes** (Ctrl+,).
