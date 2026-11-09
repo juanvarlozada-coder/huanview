@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::lang::{self, Lang};
+use crate::lang::{self, Bindings, Lang};
 use crate::loader::{Loaded, Loader};
 use crate::updater::{
     self, apply_update_and_restart, check_for_update, download_destination, download_to,
@@ -85,6 +85,13 @@ pub struct HuanApp {
     /// ventana de preferencias
     prefs_open: bool,
     prefs_cat: usize,
+    // atajos
+    bind: Bindings,
+    /// acción esperando que el usuario pulse una tecla
+    capture: Option<String>,
+    // deshacer/rehacer anotaciones: (archivo, estado)
+    undo_s: Vec<(PathBuf, Vec<Annotation>)>,
+    redo_s: Vec<(PathBuf, Vec<Annotation>)>,
 }
 
 impl HuanApp {
@@ -132,6 +139,10 @@ impl HuanApp {
             lang,
             prefs_open: false,
             prefs_cat: 0,
+            bind: lang::load_settings(),
+            capture: None,
+            undo_s: Vec::new(),
+            redo_s: Vec::new(),
         })
     }
 
@@ -515,15 +526,17 @@ impl HuanApp {
                 ui.horizontal(|ui| {
                     // —— columna de categorías ——
                     ui.vertical(|ui| {
-                        let cats: [(&str, usize); 3] = [
+                        let cats: [(&str, usize); 4] = [
                             ("🗂", 0),
                             ("🔄", 1),
+                            ("⌨", 3),
                             ("ℹ️", 2),
                         ];
                         for (icon, cat) in cats {
                             let name = match cat {
                                 0 => self.t("cat_general"),
                                 1 => self.t("cat_updates"),
+                                3 => self.t("cat_shortcuts"),
                                 _ => self.t("cat_about"),
                             };
                             let sel = self.prefs_cat == cat;
@@ -616,6 +629,62 @@ impl HuanApp {
                                         );
                                     }
                                 }
+                            }
+                            3 => {
+                                // ————————————————— Atajos de teclado
+                                ui.label(
+                                    egui::RichText::new(self.t("shortcuts_hint"))
+                                        .small()
+                                        .color(TEXT_DIM),
+                                );
+                                ui.add_space(4.0);
+                                ScrollArea::vertical().max_height(240.0).show(ui, |ui| {
+                                    ui.set_width(420.0);
+                                    let actions = [
+                                        ("copy", self.t("act_copy")),
+                                        ("undo", self.t("act_undo")),
+                                        ("redo", self.t("act_redo")),
+                                        ("pan", self.t("act_pan")),
+                                        ("pen", self.t("act_pen")),
+                                        ("marker", self.t("act_marker")),
+                                        ("settings", self.t("act_settings")),
+                                    ];
+                                    egui::Grid::new("bindgrid")
+                                        .num_columns(2)
+                                        .spacing([12.0, 4.0])
+                                        .show(ui, |ui| {
+                                            for (act, label) in actions {
+                                                ui.label(label);
+                                                let current = if let Some(cap) = &self.capture {
+                                                    if cap == act {
+                                                        format!("␣  {}", self.t("capture_prompt"))
+                                                    } else {
+                                                        self.bind.get(act).cloned().unwrap_or_default()
+                                                    }
+                                                } else {
+                                                    self.bind.get(act).cloned().unwrap_or_default()
+                                                };
+                                                let txt = if current.is_empty() {
+                                                    "—".to_string()
+                                                } else {
+                                                    current.replace("Ctrl+", "Ctrl+").to_string()
+                                                };
+                                                let accent = self.capture.as_deref() == Some(act);
+                                                let rt = egui::RichText::new(txt)
+                                                    .color(if accent { ACCENT } else { TEXT });
+                                                let rt = if accent { rt.strong() } else { rt };
+                                                let b = egui::Button::new(rt);
+                                                if ui.add(b).clicked() {
+                                                    self.capture = Some(act.to_string());
+                                                }
+                                                ui.end_row();
+                                            }
+                                        });
+                                    ui.add_space(4.0);
+                                    ui.label(
+                                        egui::RichText::new(self.t("hand_note")).small().color(TEXT_DIM),
+                                    );
+                                });
                             }
                             _ => {
                                 // ————————————————— Acerca de
@@ -710,8 +779,12 @@ impl HuanApp {
     fn draw_color_bump(&mut self, _which: usize) {}
 
     fn clear_annotations(&mut self) {
-        if let Some(p) = self.files.get(self.current) {
-            self.annotations.remove(p);
+        let p = self.files.get(self.current).cloned();
+        if let Some(p) = p {
+            if self.annotations.contains_key(&p) {
+                self.push_undo();
+                self.annotations.remove(&p);
+            }
         }
     }
 
@@ -979,7 +1052,9 @@ impl HuanApp {
         }
 
         // ---- drag: pan (zero latency) or draw annotation
-        match self.tool {
+        // mantener Espacio = mano temporal, sin importar la herramienta
+        let space_held = ctx.input(|i| i.key_down(egui::Key::Space));
+        match if space_held { Tool::Pan } else { self.tool } {
             Tool::Pan => {
                 if resp.dragged() {
                     self.offset_target += resp.drag_delta();
@@ -1015,6 +1090,7 @@ impl HuanApp {
                 if resp.drag_stopped() {
                     if let Some(d) = self.drawing.take() {
                         if d.points.len() >= 2 {
+                            self.push_undo();
                             if let Some(path) = self.files.get(self.current).cloned() {
                                 self.annotations.entry(path).or_default().push(d);
                             }
@@ -1142,6 +1218,40 @@ impl HuanApp {
     fn keys(&mut self, ctx: &egui::Context) {
         ctx.input(|i| {
             use egui::Key;
+            // ---------- captura de atajo en curso ----------
+            if let Some(act) = self.capture.clone() {
+                for ev in i.events.iter() {
+                    if let egui::Event::Key {
+                        key,
+                        pressed,
+                        modifiers: evmods,
+                        ..
+                    } = ev
+                    {
+                        if !pressed {
+                            continue;
+                        }
+                        if *key == egui::Key::Escape && !evmods.any() {
+                            self.capture = None;
+                            return;
+                        }
+                        if key_name(*key).is_none() {
+                            continue; // teclas sin nombre: no se pueden asignar
+                        }
+                        let combo = binding_str(evmods, *key);
+                        self.bind.insert(act.clone(), combo.clone());
+                        lang::save_bindings(&self.bind);
+                        self.capture = None;
+                        set_pending_toast(
+                            self.t("shortcut_set").replace("{k}", &combo),
+                        );
+                        return;
+                    }
+                }
+                return;
+            }
+
+            // ---------- navegación/ar fixed ----------
             if i.key_pressed(Key::ArrowLeft) {
                 self.navigate(-1);
             }
@@ -1168,7 +1278,6 @@ impl HuanApp {
                 self.offset_target = Vec2::ZERO;
             }
             if i.key_pressed(Key::Num2) {
-                // 1:1 (pixels reales): zoom = 1 / fit_scale
                 let fit = self.last_fit.max(0.05);
                 self.set_zoom_target(fit.recip());
             }
@@ -1176,27 +1285,92 @@ impl HuanApp {
                 self.fullscreen = !self.fullscreen;
                 ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
             }
-            if i.key_pressed(Key::A) {
-                self.tool = Tool::Pen;
-            }
-            if i.key_pressed(Key::M) {
-                self.tool = Tool::Marker;
-            }
-            if i.key_pressed(Key::V) {
-                self.tool = Tool::Pan;
-            }
-            if i.modifiers.ctrl && i.key_pressed(Key::S) {
+            if i.modifiers.ctrl && i.key_pressed(Key::S) && !i.modifiers.shift {
                 self.n_export_ann();
+            }
+            if i.modifiers.ctrl && i.key_pressed(Key::S) && i.modifiers.shift {
+                self.export_annotated_png();
             }
             if i.modifiers.ctrl && i.key_pressed(Key::O) {
                 self.open_file_dialog();
             }
             if i.key_pressed(Key::Delete) {
-                if let Some(p) = self.files.get(self.current) {
-                    self.annotations.remove(p);
-                }
+                self.push_undo();
+                self.clear_annotations();
+            }
+
+            // ---------- atajos personalizables ----------
+            if self.hit(i, "copy") {
+                self.copy_image();
+            }
+            if self.hit(i, "undo") {
+                self.do_undo();
+            }
+            if self.hit(i, "redo") {
+                self.do_redo();
+            }
+            if self.hit(i, "pan") {
+                self.tool = Tool::Pan;
+            }
+            if self.hit(i, "pen") {
+                self.tool = Tool::Pen;
+            }
+            if self.hit(i, "marker") {
+                self.tool = Tool::Marker;
+            }
+            if self.hit(i, "settings") {
+                self.prefs_open = !self.prefs_open;
             }
         });
+    }
+
+    /// ¿La combinación del atajo `action` está presionada en este frame?
+    fn hit(&self, i: &egui::InputState, action: &str) -> bool {
+        let Some(b) = self.bind.get(action) else { return false };
+        let (want_ctrl, want_shift, want_alt, ek) = parse_binding(b);
+        let Some(ek) = ek else { return false };
+        if !i.key_pressed(ek) {
+            return false;
+        }
+        i.modifiers.ctrl == want_ctrl
+            && i.modifiers.shift == want_shift
+            && i.modifiers.alt == want_alt
+    }
+
+    /// Guarda el estado actual de anotaciones para deshacer.
+    fn push_undo(&mut self) {
+        let Some(path) = self.files.get(self.current) else { return };
+        let st = self.annotations.get(path).cloned().unwrap_or_default();
+        self.undo_s.push((path.clone(), st));
+        if self.undo_s.len() > 60 {
+            self.undo_s.remove(0);
+        }
+        self.redo_s.clear();
+    }
+
+    fn do_undo(&mut self) {
+        let Some((path, prev)) = self.undo_s.pop() else { return };
+        let cur = self.annotations.get(&path).cloned().unwrap_or_default();
+        self.redo_s.push((path.clone(), cur));
+        self.annotations.insert(path, prev);
+        set_pending_toast(self.t("act_undo").to_string());
+    }
+
+    fn do_redo(&mut self) {
+        let Some((path, cur)) = self.redo_s.pop() else { return };
+        let prev = self.annotations.get(&path).cloned().unwrap_or_default();
+        self.undo_s.push((path.clone(), prev));
+        self.annotations.insert(path, cur);
+        set_pending_toast(self.t("act_redo").to_string());
+    }
+
+    /// Copia la imagen actual (sin anotaciones) al portapapeles.
+    fn copy_image(&self) {
+        let Some(path) = self.files.get(self.current) else { return };
+        match image_to_clipboard(path) {
+            Ok(()) => set_pending_toast(self.t("copied").to_string()),
+            Err(e) => set_pending_toast(format!("{} {e}", self.t("copy_failed"))),
+        }
     }
 
     fn n_export_ann(&mut self) {
@@ -1237,6 +1411,153 @@ impl HuanApp {
             set_pending_toast(self.t("ann_failed").to_string());
         }
     }
+}
+
+// ----------------------------------------------------------- motor de atajos
+
+/// Convierte un egui::Key a su nombre canónico (el mismo que se guarda en settings).
+fn key_name(k: egui::Key) -> Option<&'static str> {
+    Some(match k {
+        egui::Key::A => "A",
+        egui::Key::B => "B",
+        egui::Key::C => "C",
+        egui::Key::D => "D",
+        egui::Key::E => "E",
+        egui::Key::F => "F",
+        egui::Key::G => "G",
+        egui::Key::H => "H",
+        egui::Key::I => "I",
+        egui::Key::J => "J",
+        egui::Key::K => "K",
+        egui::Key::L => "L",
+        egui::Key::M => "M",
+        egui::Key::N => "N",
+        egui::Key::O => "O",
+        egui::Key::P => "P",
+        egui::Key::Q => "Q",
+        egui::Key::R => "R",
+        egui::Key::S => "S",
+        egui::Key::T => "T",
+        egui::Key::U => "U",
+        egui::Key::V => "V",
+        egui::Key::W => "W",
+        egui::Key::X => "X",
+        egui::Key::Y => "Y",
+        egui::Key::Z => "Z",
+        egui::Key::Num0 => "Num0",
+        egui::Key::Num1 => "Num1",
+        egui::Key::Num2 => "Num2",
+        egui::Key::Num3 => "Num3",
+        egui::Key::Num4 => "Num4",
+        egui::Key::Num5 => "Num5",
+        egui::Key::Num6 => "Num6",
+        egui::Key::Num7 => "Num7",
+        egui::Key::Num8 => "Num8",
+        egui::Key::Num9 => "Num9",
+        egui::Key::Comma => "Comma",
+        egui::Key::Period => "Period",
+        egui::Key::Space => "Space",
+        egui::Key::Minus => "Minus",
+        egui::Key::Plus => "Plus",
+        egui::Key::Equals => "Equals",
+        egui::Key::F1 => "F1",
+        egui::Key::F2 => "F2",
+        egui::Key::F3 => "F3",
+        egui::Key::F4 => "F4",
+        egui::Key::F5 => "F5",
+        egui::Key::F6 => "F6",
+        egui::Key::F7 => "F7",
+        egui::Key::F8 => "F8",
+        egui::Key::F9 => "F9",
+        egui::Key::F10 => "F10",
+        egui::Key::F11 => "F11",
+        egui::Key::F12 => "F12",
+        egui::Key::Escape => "Escape",
+        egui::Key::Backspace => "Backspace",
+        egui::Key::Delete => "Delete",
+        egui::Key::Home => "Home",
+        egui::Key::End => "End",
+        egui::Key::PageUp => "PageUp",
+        egui::Key::PageDown => "PageDown",
+        _ => return None,
+    })
+}
+
+fn key_from_name(name: &str) -> Option<egui::Key> {
+    use egui::Key;
+    Some(match name.to_ascii_uppercase().as_str() {
+        "A" => Key::A, "B" => Key::B, "C" => Key::C, "D" => Key::D, "E" => Key::E,
+        "F" => Key::F, "G" => Key::G, "H" => Key::H, "I" => Key::I, "J" => Key::J,
+        "K" => Key::K, "L" => Key::L, "M" => Key::M, "N" => Key::N, "O" => Key::O,
+        "P" => Key::P, "Q" => Key::Q, "R" => Key::R, "S" => Key::S, "T" => Key::T,
+        "U" => Key::U, "V" => Key::V, "W" => Key::W, "X" => Key::X, "Y" => Key::Y,
+        "Z" => Key::Z,
+        "NUM0" | "0" => Key::Num0, "NUM1" | "1" => Key::Num1, "NUM2" | "2" => Key::Num2,
+        "NUM3" | "3" => Key::Num3, "NUM4" | "4" => Key::Num4, "NUM5" | "5" => Key::Num5,
+        "NUM6" | "6" => Key::Num6, "NUM7" | "7" => Key::Num7, "NUM8" | "8" => Key::Num8,
+        "NUM9" | "9" => Key::Num9,
+        "COMMA" | "," => Key::Comma, "PERIOD" | "." => Key::Period,
+        "SPACE" | " " => Key::Space, "MINUS" | "-" => Key::Minus,
+        "PLUS" | "+" => Key::Plus, "EQUALS" | "=" => Key::Equals,
+        "F1" => Key::F1, "F2" => Key::F2, "F3" => Key::F3, "F4" => Key::F4,
+        "F5" => Key::F5, "F6" => Key::F6, "F7" => Key::F7, "F8" => Key::F8,
+        "F9" => Key::F9, "F10" => Key::F10, "F11" => Key::F11, "F12" => Key::F12,
+        _ => return None,
+    })
+}
+
+/// Pone la imagen (RGBA) en el portapapeles del sistema.
+fn image_to_clipboard(path: &PathBuf) -> Result<(), String> {
+    let rgba = image::open(path)
+        .map_err(|e| e.to_string())?
+        .to_rgba8();
+    let (w, h) = (rgba.width() as usize, rgba.height() as usize);
+    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    cb.set_image(arboard::ImageData {
+        width: w,
+        height: h,
+        bytes: std::borrow::Cow::Owned(rgba.into_raw()),
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Parsea "Ctrl+C" -> (ctrl, shift, alt, Some(Key::C)).
+fn parse_binding(b: &str) -> (bool, bool, bool, Option<egui::Key>) {
+    let mut ctrl = false;
+    let mut shift = false;
+    let mut alt = false;
+    let mut key = None;
+    for tok in b.split('+') {
+        let t = tok.trim();
+        match t.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => ctrl = true,
+            "shift" => shift = true,
+            "alt" => alt = true,
+            other => {
+                if !other.is_empty() {
+                    key = key_from_name(other);
+                }
+            }
+        }
+    }
+    (ctrl, shift, alt, key)
+}
+
+fn binding_str(mods: &egui::Modifiers, k: egui::Key) -> String {
+    let name = key_name(k).unwrap_or("");
+    let mut s = String::new();
+    if mods.ctrl {
+        s.push_str("Ctrl+");
+    }
+    if mods.shift {
+        s.push_str("Shift+");
+    }
+    if mods.alt {
+        s.push_str("Alt+");
+    }
+    s.push_str(name);
+    s
 }
 
 // ----------------------------------------------------------- updater glue

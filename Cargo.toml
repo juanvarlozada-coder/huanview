@@ -1,6 +1,6 @@
 [package]
 name = "huanview"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 description = "Minimalist fast image viewer inspired by Gwenview"
 license = "MIT"
@@ -15,6 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "5"
 rfd = "0.14"
+arboard = "3"
 
 [profile.release]
 opt-level = 3

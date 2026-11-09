@@ -1,5 +1,13 @@
 # Changelog de Huanview
 
+## v0.1.6 — Atajos de teclado personalizables
+- **Ajustes → ⌨ Atajos**: haz clic en una combinación y pulsa la nueva tecla para reasignarla (Esc cancela). Se guarda en `~/.config/huanview/settings.json`.
+- Acciones configurables: **Copiar imagen** (Ctrl+C), **Deshacer** (Ctrl+Z), **Rehacer** (Ctrl+Y), herramientas **Vista/Lápiz/Marcador** (V/A/M) y **Abrir ajustes** (Ctrl+,).
+- **Copiar al portapapeles**: el atajo copia la imagen actual al portapapeles del sistema (Windows/Wayland/X11).
+- **Deshacer y rehacer** anotaciones con historial de hasta 60 pasos.
+- **Guardar como** ahora también con Ctrl+Shift+S.
+- **Mano temporal**: mantén **Espacio** para desplazarte cómodamente aunque tengas lápiz o marcador activos (fijo).
+
 ## v0.1.5 — Correcciones y refino
 - **Bug visual corregido**: el marco azul de selección de las miniaturas ya no se recorta por los bordes de la tira de imágenes (margen interior + trazado del contorno dentro del recuadro).
 - **Idiomas**: la interfaz ahora sí se actualiza al instante al cambiar de idioma (el fallo venía del antiguo menú desplegable, que se tragaba los clics del selector).
