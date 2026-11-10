@@ -1,5 +1,10 @@
 # Changelog de Huanview
 
+## v0.1.8 — Nueva identidad visual
+- **Nuevo logo**: mascota frutal con degradado rojo/naranja, más moderna y reconocible.
+- Icono actualizado en **Linux (AppImage)** y **Windows (instalador y portable)**.
+- La **ventana y la barra de tareas** ahora usan el logo de Huanview (antes aparecía el icono genérico de egui).
+
 ## v0.1.7 — Interfaz reorganizada y temas
 - **Nombre del archivo** centrado entre la imagen y la tira de miniaturas (con contador i/<total>), ya no en la barra superior.
 - **Menú hamburguesa ☰ a la izquierda**: opciones de archivo (Abrir, Guardar, Guardar como), **Copiar imagen al portapapeles**, buscar actualizaciones y abrir ajustes — ahora compacto y ordenado.
