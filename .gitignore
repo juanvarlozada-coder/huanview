@@ -4,3 +4,15 @@ AppDir/
 squashfs-root/
 zig/
 dist/
+
+# basura de herramientas y editores (nunca versionar)
+*.bak
+*.orig
+*.rej
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
